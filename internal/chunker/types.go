@@ -1,0 +1,46 @@
+package chunker
+
+// StrategyType 分块策略类型
+type StrategyType int
+
+const (
+	StrategyFixed     StrategyType = iota // 固定大小
+	StrategyRecursive                     // 递归字符
+	StrategyHeading                       // Markdown 标题
+)
+
+// ChunkerConfig 分块配置
+type ChunkerConfig struct {
+	Strategy     StrategyType
+	ChunkSize    int // 目标 chunk 大小（token 数），默认 512
+	ChunkOverlap int // 重叠大小（token 数），默认 50
+	HeadingLevel int // Markdown 标题分块的目标层级，默认 2
+}
+
+// WithDefaults 填充默认值
+func (c ChunkerConfig) WithDefaults() ChunkerConfig {
+	if c.ChunkSize <= 0 {
+		c.ChunkSize = 512
+	}
+	if c.ChunkOverlap < 0 {
+		c.ChunkOverlap = 50
+	}
+	if c.HeadingLevel <= 0 {
+		c.HeadingLevel = 2
+	}
+	return c
+}
+
+// ChunkMeta 来源追溯信息
+type ChunkMeta struct {
+	DocFilename    string // 源文档文件名
+	HeadingContext string // 所属标题上下文路径
+	TokenCount     int    // 该 Chunk 的 token 数
+}
+
+// Chunk 分块输出
+type Chunk struct {
+	Content  string
+	Index    int
+	Metadata ChunkMeta
+}

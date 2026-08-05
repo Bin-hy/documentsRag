@@ -16,3 +16,6 @@
 1. 实际文件写入 `.agents/skills/<skill-name>/SKILL.md`
 2. 确保 `.claude/skills/<skill-name>` 是指向它的软链接
 3. 软链接创建命令：`ln -s ../../.agents/skills/<skill-name> .claude/skills/<skill-name>`
+
+## docs
+计划等文档请存放在docs文档下
