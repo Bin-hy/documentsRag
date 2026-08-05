@@ -61,12 +61,13 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 		vectorResults, vectorErr = r.vectorSearch(ctx, req.Query, topK, req.Filter)
 	}()
 
-	// BM25 检索（可选）
+	// BM25 检索（可选，按 kb_id 过滤）
+	kbID, _ := req.Filter["kb_id"].(string)
 	if r.config.EnableBM25 && r.bm25Index != nil && r.bm25Index.DocCount() > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bm25Results = r.bm25Index.Search(req.Query, topK)
+			bm25Results = r.bm25Index.SearchFiltered(req.Query, topK, kbID)
 		}()
 	}
 

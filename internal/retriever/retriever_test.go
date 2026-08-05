@@ -62,9 +62,9 @@ func TestSimpleTokenizerMixed(t *testing.T) {
 
 func TestBM25Index(t *testing.T) {
 	idx := NewBM25Index(NewSimpleTokenizer())
-	idx.Add("doc1", "Qdrant 是一个向量数据库")
-	idx.Add("doc2", "Redis 是一个内存数据库")
-	idx.Add("doc3", "Qdrant 支持向量检索和过滤 Qdrant")
+	idx.Add("doc1", "Qdrant 是一个向量数据库", "")
+	idx.Add("doc2", "Redis 是一个内存数据库", "")
+	idx.Add("doc3", "Qdrant 支持向量检索和过滤 Qdrant", "")
 
 	if idx.DocCount() != 3 {
 		t.Fatalf("DocCount 期望 3，实际 %d", idx.DocCount())
@@ -89,8 +89,8 @@ func TestBM25Index(t *testing.T) {
 
 func TestBM25Remove(t *testing.T) {
 	idx := NewBM25Index(NewSimpleTokenizer())
-	idx.Add("doc1", "Qdrant 向量数据库")
-	idx.Add("doc2", "Redis 缓存")
+	idx.Add("doc1", "Qdrant 向量数据库", "")
+	idx.Add("doc2", "Redis 缓存", "")
 
 	idx.Remove("doc1")
 
@@ -106,7 +106,7 @@ func TestBM25Remove(t *testing.T) {
 
 func TestBM25Rebuild(t *testing.T) {
 	idx := NewBM25Index(NewSimpleTokenizer())
-	idx.Add("old1", "旧版本遗留信息")
+	idx.Add("old1", "旧版本遗留信息", "")
 
 	docs := []BM25Doc{
 		{ID: "new1", Content: "新的向量数据库"},
@@ -126,6 +126,43 @@ func TestBM25Rebuild(t *testing.T) {
 	results = idx.Search("向量", 10)
 	if len(results) == 0 {
 		t.Error("Rebuild 后应能搜索到新文档")
+	}
+}
+
+// 知识库隔离：SearchFiltered 只返回指定 kb 的结果
+func TestBM25SearchFilteredByKB(t *testing.T) {
+	idx := NewBM25Index(NewSimpleTokenizer())
+	idx.Add("doc1", "Qdrant 向量数据库", "kb-a")
+	idx.Add("doc2", "Qdrant 配置指南", "kb-b")
+	idx.Add("doc3", "Qdrant 部署", "kb-a")
+
+	// 不带 kb 过滤：三篇都命中
+	all := idx.Search("Qdrant", 10)
+	if len(all) != 3 {
+		t.Fatalf("不过滤时期望 3 条，实际 %d", len(all))
+	}
+
+	// 指定 kb-a：只返回 doc1/doc3
+	onlyA := idx.SearchFiltered("Qdrant", 10, "kb-a")
+	if len(onlyA) != 2 {
+		t.Fatalf("kb-a 过滤后期望 2 条，实际 %d", len(onlyA))
+	}
+	for _, r := range onlyA {
+		if r.ID == "doc2" {
+			t.Error("kb-a 过滤不应包含 kb-b 的 doc2")
+		}
+	}
+
+	// 指定 kb-b：只返回 doc2
+	onlyB := idx.SearchFiltered("Qdrant", 10, "kb-b")
+	if len(onlyB) != 1 || onlyB[0].ID != "doc2" {
+		t.Errorf("kb-b 过滤期望仅 doc2，实际 %v", onlyB)
+	}
+
+	// 不存在的 kb：无结果
+	none := idx.SearchFiltered("Qdrant", 10, "kb-zzz")
+	if len(none) != 0 {
+		t.Errorf("不存在的 kb 应无结果，实际 %v", none)
 	}
 }
 
@@ -254,8 +291,8 @@ func TestRetrieverSearch(t *testing.T) {
 	}}
 
 	bm25 := NewBM25Index(NewSimpleTokenizer())
-	bm25.Add("v1", "向量结果1 关键词匹配")
-	bm25.Add("b1", "BM25 独有结果")
+	bm25.Add("v1", "向量结果1 关键词匹配", "")
+	bm25.Add("b1", "BM25 独有结果", "")
 
 	rk := &mockReranker{}
 

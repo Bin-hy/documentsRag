@@ -13,6 +13,10 @@ type Config struct {
 	Chunker     ChunkerConfig     `yaml:"chunker"`
 	Retriever   RetrieverConfig   `yaml:"retriever"`
 	Reranker    RerankerConfig    `yaml:"reranker"`
+	LLM         LLMConfig         `yaml:"llm"`
+	RAG         RAGConfig         `yaml:"rag"`
+	Postgres    PostgresConfig    `yaml:"postgres"`
+	Server      ServerConfig      `yaml:"server"`
 }
 
 // RetrieverConfig 检索器配置
@@ -61,6 +65,53 @@ type ChunkerConfig struct {
 	ChunkSize    int    `yaml:"chunk_size"`
 	ChunkOverlap int    `yaml:"chunk_overlap"`
 	HeadingLevel int    `yaml:"heading_level"`
+}
+
+// LLMConfig LLM 提供者配置（OpenAI 兼容接口）
+type LLMConfig struct {
+	BaseURL     string  `yaml:"base_url"`
+	APIKey      string  `yaml:"api_key"`
+	Model       string  `yaml:"model"`
+	Temperature float32 `yaml:"temperature"`
+	MaxTokens   int     `yaml:"max_tokens"`
+	MaxRetries  int     `yaml:"max_retries"`
+	QPS         int     `yaml:"qps"`
+	Timeout     int     `yaml:"timeout"` // 秒
+}
+
+// RAGConfig RAG 编排配置
+type RAGConfig struct {
+	TopK                int    `yaml:"top_k"`
+	MaxContextTokens    int    `yaml:"max_context_tokens"`
+	MaxChunks           int    `yaml:"max_chunks"`
+	EnableRewrite       *bool  `yaml:"enable_rewrite"`
+	HistoryCapacity     int    `yaml:"history_capacity"`
+	HistoryLimit        int    `yaml:"history_limit"`
+	SystemPromptPath    string `yaml:"system_prompt_path"`
+	ContextTemplatePath string `yaml:"context_template_path"`
+	RewriteTemplatePath string `yaml:"rewrite_template_path"`
+}
+
+// RewriteEnabled 是否启用 Query 改写（nil 视为启用，即默认开启）
+func (c RAGConfig) RewriteEnabled() bool {
+	return c.EnableRewrite == nil || *c.EnableRewrite
+}
+
+// PostgresConfig 元数据存储配置
+type PostgresConfig struct {
+	DSN string `yaml:"dsn"`
+}
+
+// ServerConfig HTTP 服务配置
+type ServerConfig struct {
+	Port            int    `yaml:"port"`
+	FileStorageDir  string `yaml:"file_storage_dir"`
+	UploadMaxSizeMB int    `yaml:"upload_max_size_mb"`
+	WorkerCount     int    `yaml:"worker_count"`
+	TaskMaxRetries  int    `yaml:"task_max_retries"`
+	AuthEnabled     bool   `yaml:"auth_enabled"`
+	BootstrapAPIKey string `yaml:"bootstrap_api_key"` // 仅首次启动种子用
+	RateLimitQPS    int    `yaml:"rate_limit_qps"`    // 0 表示不限制
 }
 
 // LoadConfig 加载配置文件
@@ -136,5 +187,57 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Reranker.QPS <= 0 {
 		c.Reranker.QPS = 10
+	}
+	// LLM 默认值
+	if c.LLM.MaxRetries <= 0 {
+		c.LLM.MaxRetries = 3
+	}
+	if c.LLM.QPS <= 0 {
+		c.LLM.QPS = 10
+	}
+	if c.LLM.Timeout <= 0 {
+		c.LLM.Timeout = 60
+	}
+	if c.LLM.Temperature == 0 {
+		c.LLM.Temperature = 0.7
+	}
+	if c.LLM.MaxTokens <= 0 {
+		c.LLM.MaxTokens = 2048
+	}
+	// RAG 默认值
+	if c.RAG.TopK <= 0 {
+		c.RAG.TopK = 5
+	}
+	if c.RAG.MaxContextTokens <= 0 {
+		c.RAG.MaxContextTokens = 2048
+	}
+	if c.RAG.MaxChunks <= 0 {
+		c.RAG.MaxChunks = 5
+	}
+	if c.RAG.EnableRewrite == nil {
+		enabled := true
+		c.RAG.EnableRewrite = &enabled
+	}
+	if c.RAG.HistoryCapacity <= 0 {
+		c.RAG.HistoryCapacity = 50
+	}
+	if c.RAG.HistoryLimit <= 0 {
+		c.RAG.HistoryLimit = 10
+	}
+	// Server 默认值
+	if c.Server.Port <= 0 {
+		c.Server.Port = 8080
+	}
+	if c.Server.FileStorageDir == "" {
+		c.Server.FileStorageDir = "./data/uploads"
+	}
+	if c.Server.UploadMaxSizeMB <= 0 {
+		c.Server.UploadMaxSizeMB = 50
+	}
+	if c.Server.WorkerCount <= 0 {
+		c.Server.WorkerCount = 2
+	}
+	if c.Server.TaskMaxRetries <= 0 {
+		c.Server.TaskMaxRetries = 3
 	}
 }

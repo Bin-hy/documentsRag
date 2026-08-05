@@ -13,9 +13,10 @@ const (
 
 // BM25Index 内存倒排索引接口
 type BM25Index interface {
-	Add(id string, content string)
+	Add(id string, content string, kbID string)
 	Remove(id string)
 	Search(query string, topK int) []BM25Result
+	SearchFiltered(query string, topK int, kbID string) []BM25Result // 空 kbID 不过滤
 	Rebuild(docs []BM25Doc)
 	DocCount() int
 }
@@ -30,7 +31,8 @@ type defaultBM25Index struct {
 	tokenizer Tokenizer
 	inverted  map[string][]posting // term -> postings
 	docLen    map[string]int       // docID -> token count
-	docTerms map[string][]string   // docID -> terms (用于 Remove)
+	docTerms  map[string][]string  // docID -> terms (用于 Remove)
+	docKB     map[string]string    // docID -> kbID
 	totalLen  int
 	avgLen    float64
 }
@@ -42,10 +44,11 @@ func NewBM25Index(tokenizer Tokenizer) BM25Index {
 		inverted:  make(map[string][]posting),
 		docLen:    make(map[string]int),
 		docTerms:  make(map[string][]string),
+		docKB:     make(map[string]string),
 	}
 }
 
-func (idx *defaultBM25Index) Add(id string, content string) {
+func (idx *defaultBM25Index) Add(id string, content string, kbID string) {
 	tokens := idx.tokenizer.Tokenize(content)
 	if len(tokens) == 0 {
 		return
@@ -65,6 +68,7 @@ func (idx *defaultBM25Index) Add(id string, content string) {
 	}
 
 	idx.docLen[id] = len(tokens)
+	idx.docKB[id] = kbID
 	idx.totalLen += len(tokens)
 	idx.avgLen = float64(idx.totalLen) / float64(len(idx.docLen))
 
@@ -105,6 +109,7 @@ func (idx *defaultBM25Index) removeLocked(id string) {
 	idx.totalLen -= docLen
 	delete(idx.docLen, id)
 	delete(idx.docTerms, id)
+	delete(idx.docKB, id)
 
 	if len(idx.docLen) > 0 {
 		idx.avgLen = float64(idx.totalLen) / float64(len(idx.docLen))
@@ -114,6 +119,11 @@ func (idx *defaultBM25Index) removeLocked(id string) {
 }
 
 func (idx *defaultBM25Index) Search(query string, topK int) []BM25Result {
+	return idx.SearchFiltered(query, topK, "")
+}
+
+// SearchFiltered 按知识库过滤的 BM25 检索；kbID 为空时不过滤
+func (idx *defaultBM25Index) SearchFiltered(query string, topK int, kbID string) []BM25Result {
 	tokens := idx.tokenizer.Tokenize(query)
 	if len(tokens) == 0 {
 		return nil
@@ -139,6 +149,10 @@ func (idx *defaultBM25Index) Search(query string, topK int) []BM25Result {
 		idf := math.Log((n-df+0.5)/(df+0.5) + 1)
 
 		for _, p := range postings {
+			// 知识库过滤（在锁内读取 docKB，安全）
+			if kbID != "" && idx.docKB[p.docID] != kbID {
+				continue
+			}
 			dl := float64(idx.docLen[p.docID])
 			tfNorm := (float64(p.tf) * (bm25K1 + 1)) /
 				(float64(p.tf) + bm25K1*(1-bm25B+bm25B*dl/idx.avgLen))
@@ -167,12 +181,13 @@ func (idx *defaultBM25Index) Rebuild(docs []BM25Doc) {
 	idx.inverted = make(map[string][]posting)
 	idx.docLen = make(map[string]int)
 	idx.docTerms = make(map[string][]string)
+	idx.docKB = make(map[string]string)
 	idx.totalLen = 0
 	idx.avgLen = 0
 	idx.mu.Unlock()
 
 	for _, doc := range docs {
-		idx.Add(doc.ID, doc.Content)
+		idx.Add(doc.ID, doc.Content, "")
 	}
 }
 

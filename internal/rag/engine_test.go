@@ -1,0 +1,462 @@
+package rag
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/Bin-hy/bin-rag/internal/config"
+	"github.com/Bin-hy/bin-rag/internal/llm"
+	"github.com/Bin-hy/bin-rag/internal/retriever"
+)
+
+// fakeLLM 实现 llm.LLM 接口
+type fakeLLM struct {
+	mu          sync.Mutex
+	genFunc     func(ctx context.Context, messages []llm.Message) (string, error)
+	streamFunc  func(ctx context.Context, messages []llm.Message) (<-chan llm.StreamChunk, error)
+	genCalls    int
+	streamCalls int
+	genMessages [][]llm.Message // 每次 Generate 收到的消息
+}
+
+func (f *fakeLLM) Generate(ctx context.Context, messages []llm.Message, _ ...llm.ChatOption) (string, error) {
+	f.mu.Lock()
+	f.genCalls++
+	cp := make([]llm.Message, len(messages))
+	copy(cp, messages)
+	f.genMessages = append(f.genMessages, cp)
+	f.mu.Unlock()
+	return f.genFunc(ctx, messages)
+}
+
+func (f *fakeLLM) StreamGenerate(ctx context.Context, messages []llm.Message, _ ...llm.ChatOption) (<-chan llm.StreamChunk, error) {
+	f.mu.Lock()
+	f.streamCalls++
+	f.mu.Unlock()
+	return f.streamFunc(ctx, messages)
+}
+
+// fakeRetriever 实现 retriever.Retriever 接口
+type fakeRetriever struct {
+	mu         sync.Mutex
+	searchFunc func(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error)
+	queries    []string
+}
+
+func (f *fakeRetriever) Search(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	f.queries = append(f.queries, req.Query)
+	f.mu.Unlock()
+	return f.searchFunc(ctx, req)
+}
+
+// 测试用 RAG 配置（EnableRewrite 为 nil，RewriteEnabled() 默认 true）
+func testRAGConfig() config.RAGConfig {
+	return config.RAGConfig{
+		TopK:             5,
+		MaxContextTokens: 2048,
+		MaxChunks:        5,
+		HistoryCapacity:  50,
+		HistoryLimit:     10,
+	}
+}
+
+// 构造测试用检索结果
+func testResults() []retriever.RetrieveResult {
+	return []retriever.RetrieveResult{
+		testChunk("r1", "检索内容一", "doc1.md", "标题1"),
+		testChunk("r2", "检索内容二", "doc2.md", "标题2"),
+	}
+}
+
+// AC5+AC6: 完整链路——改写用于检索、原问题用于生成、回答带引用来源
+func TestAsk_FullChain(t *testing.T) {
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, messages []llm.Message) (string, error) {
+			genCalls++
+			// 第一次是改写调用（user 消息含改写模板特征）
+			if genCalls == 1 {
+				return "rewritten-query", nil
+			}
+			// 第二次是生成调用
+			return "这是根据资料生成的回答", nil
+		},
+	}
+
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "它支持哪些格式？")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 改写结果用于检索
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 1 || ft.queries[0] != "rewritten-query" {
+		t.Errorf("改写查询未用于检索: %v", ft.queries)
+	}
+
+	// 回答与引用来源
+	if res.Answer != "这是根据资料生成的回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	if len(res.Sources) != 2 {
+		t.Fatalf("引用来源数量错误: %d", len(res.Sources))
+	}
+	if res.Sources[0].ID != "r1" || res.Sources[1].ID != "r2" {
+		t.Errorf("引用来源与检索结果不对应: %+v", res.Sources)
+	}
+
+	// 生成调用使用原始问题（非改写查询）
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	if genCalls != 2 {
+		t.Fatalf("LLM 调用次数错误: %d", genCalls)
+	}
+	genMsg := fl.genMessages[1]
+	last := genMsg[len(genMsg)-1]
+	if !strings.Contains(last.Content, "它支持哪些格式？") {
+		t.Errorf("生成应使用原始问题: %q", last.Content)
+	}
+	if strings.Contains(last.Content, "rewritten-query") {
+		t.Errorf("生成不应包含改写查询: %q", last.Content)
+	}
+
+	// 历史落库
+	hist, _ := hs.Get("s1", 0)
+	if len(hist) != 2 || hist[0].Content != "它支持哪些格式？" || hist[1].Content != "这是根据资料生成的回答" {
+		t.Errorf("历史落库错误: %+v", hist)
+	}
+}
+
+// AC5: 改写请求携带对话历史上下文
+func TestAsk_RewriteReceivesHistory(t *testing.T) {
+	hs := NewMemoryHistoryStore(50)
+	_ = hs.Append("s1", llm.RoleUser, "RAG 是什么？")
+	_ = hs.Append("s1", llm.RoleAssistant, "RAG 是检索增强生成。")
+
+	var rewriteMessages []llm.Message
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, messages []llm.Message) (string, error) {
+			if strings.Contains(messages[0].Content, "改写后的查询") {
+				rewriteMessages = messages
+				return "rw", nil
+			}
+			return "回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	if _, err := engine.Ask(context.Background(), "s1", "它有哪些优点？"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	if rewriteMessages == nil {
+		t.Fatal("未捕获改写调用")
+	}
+	if !strings.Contains(rewriteMessages[0].Content, "RAG 是什么？") {
+		t.Errorf("改写提示未携带历史: %q", rewriteMessages[0].Content)
+	}
+}
+
+// AC10: 检索结果为空——返回兜底回答，不调用 LLM 生成
+func TestAsk_EmptyRetrieval(t *testing.T) {
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "不应被调用", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return nil, nil
+		},
+	}
+
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "不存在的问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != noAnswerText {
+		t.Errorf("兜底回答错误: %q", res.Answer)
+	}
+	if len(res.Sources) != 0 {
+		t.Errorf("空结果不应有引用: %+v", res.Sources)
+	}
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	if fl.genCalls != 1 {
+		// 仅改写调用，生成不应发生
+		t.Errorf("LLM 生成不应被调用: genCalls=%d", fl.genCalls)
+	}
+}
+
+// AC7: 流式事件序列 Sources → Chunk×N → Done，引用与检索结果对应
+func TestStreamAsk_EventSequence(t *testing.T) {
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "rw", nil // 改写
+		},
+		streamFunc: func(_ context.Context, _ []llm.Message) (<-chan llm.StreamChunk, error) {
+			ch := make(chan llm.StreamChunk, 3)
+			ch <- llm.StreamChunk{Content: "答案"}
+			ch <- llm.StreamChunk{Content: "内容"}
+			ch <- llm.StreamChunk{Done: true}
+			close(ch)
+			return ch, nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	events, err := engine.StreamAsk(context.Background(), "s1", "流式问题")
+	if err != nil {
+		t.Fatalf("StreamAsk 失败: %v", err)
+	}
+
+	var types []EventType
+	var content strings.Builder
+	var sources []Source
+	for ev := range events {
+		types = append(types, ev.Type)
+		switch ev.Type {
+		case EventChunk:
+			content.WriteString(ev.Content)
+		case EventSources:
+			sources = ev.Sources
+		case EventError:
+			t.Fatalf("流式出错: %v", ev.Err)
+		}
+	}
+
+	if len(types) != 4 || types[0] != EventSources || types[3] != EventDone {
+		t.Fatalf("事件序列错误: %v", types)
+	}
+	if content.String() != "答案内容" {
+		t.Errorf("流式拼合错误: %q", content.String())
+	}
+	if len(sources) != 2 || sources[0].ID != "r1" {
+		t.Errorf("流式引用错误: %+v", sources)
+	}
+
+	// 历史落库
+	hist, _ := hs.Get("s1", 0)
+	if len(hist) != 2 || hist[1].Content != "答案内容" {
+		t.Errorf("流式历史落库错误: %+v", hist)
+	}
+}
+
+// AC11: 替换系统提示词模板后，生成请求中的 system 消息随之变化
+func TestAsk_CustomSystemPrompt(t *testing.T) {
+	dir := t.TempDir()
+	sysPath := filepath.Join(dir, "system.txt")
+	if err := os.WriteFile(sysPath, []byte("自定义系统提示词内容"), 0o644); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+
+	cfg := testRAGConfig()
+	cfg.SystemPromptPath = sysPath
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "rw", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	if _, err := engine.Ask(context.Background(), "s1", "问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	genMsg := fl.genMessages[len(fl.genMessages)-1]
+	if genMsg[0].Role != llm.RoleSystem || genMsg[0].Content != "自定义系统提示词内容" {
+		t.Errorf("系统提示词未替换: %+v", genMsg[0])
+	}
+}
+
+// N3: 改写失败降级用原问题，检索与生成正常
+func TestAsk_RewriteFailureFallback(t *testing.T) {
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "", os.ErrNotExist // 改写失败
+			}
+			return "正常回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "原始问题")
+	if err != nil {
+		t.Fatalf("改写失败应降级而非报错: %v", err)
+	}
+	if res.Answer != "正常回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 1 || ft.queries[0] != "原始问题" {
+		t.Errorf("改写失败应降级用原问题: %v", ft.queries)
+	}
+}
+
+// N3: 禁用改写时，检索直接用原问题，LLM 仅生成调用一次
+func TestAsk_RewriteDisabled(t *testing.T) {
+	cfg := testRAGConfig()
+	disabled := false
+	cfg.EnableRewrite = &disabled
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "直接回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	if _, err := engine.Ask(context.Background(), "s1", "原问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 1 || ft.queries[0] != "原问题" {
+		t.Errorf("禁用改写应直接用原问题检索: %v", ft.queries)
+	}
+	fl.mu.Lock()
+	defer fl.mu.Unlock()
+	if fl.genCalls != 1 {
+		t.Errorf("禁用改写时 LLM 应只调用一次: %d", fl.genCalls)
+	}
+}
+
+// N2: 并发 Ask 无竞争
+func TestAsk_Concurrent(t *testing.T) {
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "rw", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(100)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			session := "s" + string(rune('A'+g))
+			for i := 0; i < 10; i++ {
+				_, _ = engine.Ask(context.Background(), session, "问题")
+			}
+		}(g)
+	}
+	wg.Wait()
+}
+
+// 回归: ctx 取消时流式回答不落历史、不发 Done
+func TestStreamAsk_ContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "rw", nil
+		},
+		streamFunc: func(_ context.Context, _ []llm.Message) (<-chan llm.StreamChunk, error) {
+			ch := make(chan llm.StreamChunk)
+			go func() {
+				ch <- llm.StreamChunk{Content: "部分"}
+				<-ctx.Done()
+				close(ch)
+			}()
+			return ch, nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+
+	events, err := engine.StreamAsk(ctx, "s1", "问题")
+	if err != nil {
+		t.Fatalf("StreamAsk 失败: %v", err)
+	}
+
+	var types []EventType
+	for ev := range events {
+		types = append(types, ev.Type)
+		if ev.Type == EventChunk {
+			cancel() // 收到内容后取消
+		}
+	}
+
+	// 取消后不应发 Done
+	for _, ty := range types {
+		if ty == EventDone {
+			t.Errorf("ctx 取消后不应发 EventDone: %v", types)
+		}
+	}
+
+	// 取消后不应落历史
+	hist, _ := hs.Get("s1", 0)
+	if len(hist) != 0 {
+		t.Errorf("ctx 取消后不应落历史: %+v", hist)
+	}
+}

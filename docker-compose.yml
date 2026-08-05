@@ -10,5 +10,23 @@ services:
       - QDRANT__SERVICE__GRPC_PORT=6334
     restart: unless-stopped
 
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=binrag
+      - POSTGRES_PASSWORD=binrag
+      - POSTGRES_DB=binrag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U binrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
 volumes:
   qdrant_data:
+  pg_data:

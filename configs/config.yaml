@@ -73,3 +73,66 @@ reranker:
   max_retries: 3
   # 限流 QPS
   qps: 10
+
+# LLM 提供者配置（OpenAI 兼容 /v1/chat/completions，支持 GPT/豆包/DeepSeek/vLLM 等）
+llm:
+  # API 地址（本地模型时改为 Ollama/vLLM 地址，如 http://localhost:11434/v1）
+  base_url: "https://xxx"
+  # API Key（本地模型可留空，省略鉴权头）
+  api_key: "sk-xxx"
+  # 模型名称
+  model: "gpt-4o"
+  # 生成温度
+  temperature: 0.7
+  # 单次生成最大 token 数
+  max_tokens: 2048
+  # 最大重试次数
+  max_retries: 3
+  # 限流 QPS
+  qps: 10
+  # HTTP 超时（秒）
+  timeout: 60
+
+# RAG 编排配置
+rag:
+  # 检索返回的片段数量
+  top_k: 5
+  # 注入上下文的 token 预算（超预算截断）
+  max_context_tokens: 2048
+  # 注入上下文的片段数量上限
+  max_chunks: 5
+  # 是否启用 Query 改写（不配置默认启用）
+  enable_rewrite: true
+  # 对话历史容量（超出丢弃最旧消息）
+  history_capacity: 50
+  # 注入生成请求的历史消息条数
+  history_limit: 10
+  # Prompt 模板文件路径（留空使用内置默认模板）
+  system_prompt_path: ""
+  context_template_path: ""
+  rewrite_template_path: ""
+
+# 元数据存储（PostgreSQL）
+postgres:
+  # 连接串（docker-compose 默认账号）
+  dsn: "postgres://binrag:binrag@localhost:5432/binrag"
+
+# HTTP 服务配置
+server:
+  # 监听端口
+  port: 8085
+  # 上传文件存储目录
+  file_storage_dir: "./data/uploads"
+  # 上传大小上限（MB）
+  upload_max_size_mb: 1024
+  # 入库 worker 并发数
+  worker_count: 5
+  # 任务失败最大重试次数
+  task_max_retries: 3
+  # 是否启用 API Key 认证
+  auth_enabled: true
+  # 首次启动种子 API Key（建完首个 Key 后建议删除该配置）
+  bootstrap_api_key: ""
+  # 全局限流 QPS（0 表示不限制）
+  rate_limit_qps: 0
+

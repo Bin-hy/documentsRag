@@ -1,5 +1,7 @@
 package chunker
 
+import "strings"
+
 // StrategyType 分块策略类型
 type StrategyType int
 
@@ -8,6 +10,20 @@ const (
 	StrategyRecursive                     // 递归字符
 	StrategyHeading                       // Markdown 标题
 )
+
+// ParseStrategy 将配置字符串（yaml）映射为策略类型；未知值回退 recursive
+func ParseStrategy(name string) StrategyType {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "fixed":
+		return StrategyFixed
+	case "heading":
+		return StrategyHeading
+	case "recursive", "":
+		return StrategyRecursive
+	default:
+		return StrategyRecursive
+	}
+}
 
 // ChunkerConfig 分块配置
 type ChunkerConfig struct {

@@ -1,2 +1,10 @@
+# agent config
+.reasonix/
+.claude/
+
+
 # 忽略本地
 *.local.*
+
+# 文件上传
+.data/

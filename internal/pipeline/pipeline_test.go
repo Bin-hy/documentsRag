@@ -77,7 +77,12 @@ func TestIngestSuccess(t *testing.T) {
 	reader := strings.NewReader(input)
 	info := loader.FileInfo{Filename: "test.md", Size: int64(len(input))}
 
-	err := p.Ingest(context.Background(), reader, info)
+	_, err := p.Ingest(context.Background(), IngestRequest{
+		KBID:       "kb-1",
+		DocumentID: "doc-1",
+		Reader:     reader,
+		Info:       info,
+	})
 	if err != nil {
 		t.Fatalf("Ingest 失败: %v", err)
 	}
@@ -89,6 +94,15 @@ func TestIngestSuccess(t *testing.T) {
 	for _, r := range vs.records {
 		if r.Payload["filename"] != "test.md" {
 			t.Errorf("filename 期望 test.md，实际 %v", r.Payload["filename"])
+		}
+		if r.Payload["kb_id"] != "kb-1" {
+			t.Errorf("kb_id 期望 kb-1，实际 %v", r.Payload["kb_id"])
+		}
+		if r.Payload["document_id"] != "doc-1" {
+			t.Errorf("document_id 期望 doc-1，实际 %v", r.Payload["document_id"])
+		}
+		if _, ok := r.Payload["chunk_id"]; !ok {
+			t.Error("record 缺少 chunk_id 字段")
 		}
 		if _, ok := r.Payload["heading_context"]; !ok {
 			t.Error("record 缺少 heading_context 字段")
@@ -122,7 +136,12 @@ func TestIngestEmbedError(t *testing.T) {
 	)
 
 	input := "一些文本内容"
-	err := p.Ingest(context.Background(), strings.NewReader(input), loader.FileInfo{Filename: "test.txt"})
+	_, err := p.Ingest(context.Background(), IngestRequest{
+		KBID:       "kb-1",
+		DocumentID: "doc-1",
+		Reader:     strings.NewReader(input),
+		Info:       loader.FileInfo{Filename: "test.txt"},
+	})
 	if err == nil {
 		t.Fatal("Embed 失败时 Ingest 应返回 error")
 	}
@@ -142,7 +161,12 @@ func TestIngestUpsertError(t *testing.T) {
 	)
 
 	input := "一些文本内容"
-	err := p.Ingest(context.Background(), strings.NewReader(input), loader.FileInfo{Filename: "test.txt"})
+	_, err := p.Ingest(context.Background(), IngestRequest{
+		KBID:       "kb-1",
+		DocumentID: "doc-1",
+		Reader:     strings.NewReader(input),
+		Info:       loader.FileInfo{Filename: "test.txt"},
+	})
 	if err == nil {
 		t.Fatal("Upsert 失败时 Ingest 应返回 error")
 	}

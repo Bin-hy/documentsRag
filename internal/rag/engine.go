@@ -1,0 +1,267 @@
+package rag
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/Bin-hy/bin-rag/internal/config"
+	"github.com/Bin-hy/bin-rag/internal/llm"
+	"github.com/Bin-hy/bin-rag/internal/retriever"
+)
+
+// noAnswerText 检索结果为空时的兜底回答
+const noAnswerText = "未找到相关资料。"
+
+// RAGResult 回答结果
+type RAGResult struct {
+	Answer  string   `json:"answer"`
+	Sources []Source `json:"sources"`
+}
+
+// EventType 流式事件类型
+type EventType int
+
+const (
+	EventSources EventType = iota // 引用来源，先发
+	EventChunk                    // 文本增量
+	EventDone                     // 正常结束
+	EventError                    // 出错终止
+)
+
+// StreamEvent 流式 RAG 事件
+type StreamEvent struct {
+	Type    EventType
+	Content string   // EventChunk 时有效
+	Sources []Source // EventSources 时有效
+	Err     error    // EventError 时有效
+}
+
+// Engine RAG 编排接口
+type Engine interface {
+	Ask(ctx context.Context, sessionID string, question string, opts ...AskOption) (*RAGResult, error)
+	StreamAsk(ctx context.Context, sessionID string, question string, opts ...AskOption) (<-chan StreamEvent, error)
+}
+
+// AskOptions 问答选项
+type AskOptions struct {
+	KBID string // 知识库范围，空表示不限定
+}
+
+// AskOption 函数式问答选项
+type AskOption func(*AskOptions)
+
+// WithKBID 限定知识库范围（检索时按 kb_id 过滤）
+func WithKBID(kbID string) AskOption {
+	return func(o *AskOptions) { o.KBID = kbID }
+}
+
+// RAGEngine 编排实现：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
+type RAGEngine struct {
+	cfg       config.RAGConfig
+	llm       llm.LLM
+	retriever retriever.Retriever
+	history   HistoryStore
+	templates promptTemplates
+}
+
+// NewEngine 创建 RAG 编排器
+func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs HistoryStore) Engine {
+	return &RAGEngine{
+		cfg:       cfg,
+		llm:       l,
+		retriever: rt,
+		history:   hs,
+		templates: loadPromptTemplates(cfg),
+	}
+}
+
+// Ask 单轮问答：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
+func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, opts ...AskOption) (*RAGResult, error) {
+	messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// 检索结果为空：跳过 LLM 生成，直接兜底回答
+	if len(sources) == 0 {
+		e.appendHistory(sessionID, llm.RoleUser, question)
+		e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText)
+		return &RAGResult{Answer: noAnswerText}, nil
+	}
+
+	start := time.Now()
+	answer, err := e.llm.Generate(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("RAG 生成完成", "session", sessionID, "生成耗时ms", time.Since(start).Milliseconds())
+
+	e.appendHistory(sessionID, llm.RoleUser, question)
+	e.appendHistory(sessionID, llm.RoleAssistant, answer)
+
+	return &RAGResult{Answer: answer, Sources: sources}, nil
+}
+
+// StreamAsk 流式问答：事件序列 EventSources → EventChunk×N → EventDone；出错发 EventError
+func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question string, opts ...AskOption) (<-chan StreamEvent, error) {
+	out := make(chan StreamEvent)
+
+	go func() {
+		defer close(out)
+
+		messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
+		if err != nil {
+			sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
+			return
+		}
+
+		sendEvent(ctx, out, StreamEvent{Type: EventSources, Sources: sources})
+
+		// 检索结果为空：直接兜底回答
+		if len(sources) == 0 {
+			sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: noAnswerText})
+			e.appendHistory(sessionID, llm.RoleUser, question)
+			e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText)
+			sendEvent(ctx, out, StreamEvent{Type: EventDone})
+			return
+		}
+
+		ch, err := e.llm.StreamGenerate(ctx, messages)
+		if err != nil {
+			sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
+			return
+		}
+
+		var sb strings.Builder
+		for chunk := range ch {
+			if chunk.Err != nil {
+				sendEvent(ctx, out, StreamEvent{Type: EventError, Err: chunk.Err})
+				return
+			}
+			if chunk.Done {
+				break
+			}
+			sb.WriteString(chunk.Content)
+			if !sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: chunk.Content}) {
+				return
+			}
+		}
+
+		// ctx 取消：丢弃截断结果，不落历史、不发 Done
+		if ctx.Err() != nil {
+			return
+		}
+
+		e.appendHistory(sessionID, llm.RoleUser, question)
+		e.appendHistory(sessionID, llm.RoleAssistant, sb.String())
+		sendEvent(ctx, out, StreamEvent{Type: EventDone})
+	}()
+
+	return out, nil
+}
+
+// appendHistory 写入对话历史，失败仅告警不阻断主流程
+func (e *RAGEngine) appendHistory(sessionID string, role string, content string) {
+	if err := e.history.Append(sessionID, role, content); err != nil {
+		slog.Warn("写入对话历史失败", "session", sessionID, "err", err)
+	}
+}
+
+// prepare 执行 历史读取 → 改写 → 检索 → 组装，返回可注入的 messages 与引用来源
+func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question string, opts ...AskOption) ([]llm.Message, []Source, error) {
+	o := AskOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
+	history, err := e.history.Get(sessionID, e.cfg.HistoryLimit)
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取对话历史失败: %w", err)
+	}
+
+	// Query 改写（失败降级用原问题）
+	query := question
+	if e.cfg.RewriteEnabled() {
+		rewriteStart := time.Now()
+		rewritten, err := e.rewriteQuery(ctx, history, question)
+		if err != nil {
+			slog.Warn("Query 改写失败，降级使用原问题", "err", err)
+		} else {
+			query = rewritten
+			slog.Info("Query 改写完成", "原问题", question, "改写后", query,
+				"耗时ms", time.Since(rewriteStart).Milliseconds())
+		}
+	}
+
+	// 检索（携带知识库范围）
+	retrieveStart := time.Now()
+	chunks, err := e.retriever.Search(ctx, retriever.RetrieveRequest{
+		Query:  query,
+		TopK:   e.cfg.TopK,
+		Filter: kbFilter(o.KBID),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("检索失败: %w", err)
+	}
+	slog.Info("检索完成", "检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
+
+	// 上下文组装
+	items, sources := buildContext(chunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
+	contextText, err := renderContext(items, e.templates.context)
+	if err != nil {
+		return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
+	}
+	slog.Info("上下文组装完成", "上下文token", estimateTokens(contextText), "引用数", len(sources))
+
+	// 组装 messages：system + 历史 + user（上下文 + 原始问题）
+	messages := make([]llm.Message, 0, 2+len(history))
+	messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: e.templates.system})
+	messages = append(messages, history...)
+	userContent := contextText + "\n\n用户问题：" + question
+	messages = append(messages, llm.Message{Role: llm.RoleUser, Content: userContent})
+
+	return messages, sources, nil
+}
+
+// rewriteQuery 调用 LLM 改写查询（固定低温，仅输出改写结果）
+func (e *RAGEngine) rewriteQuery(ctx context.Context, history []llm.Message, question string) (string, error) {
+	prompt, err := renderRewrite(history, question, e.templates.rewrite)
+	if err != nil {
+		return "", fmt.Errorf("渲染改写提示失败: %w", err)
+	}
+
+	rewritten, err := e.llm.Generate(ctx,
+		[]llm.Message{{Role: llm.RoleUser, Content: prompt}},
+		llm.WithTemperature(0.1),
+	)
+	if err != nil {
+		return "", fmt.Errorf("改写调用失败: %w", err)
+	}
+
+	rewritten = strings.TrimSpace(rewritten)
+	if rewritten == "" {
+		return "", fmt.Errorf("改写结果为空")
+	}
+	return rewritten, nil
+}
+
+// kbFilter 构造知识库过滤条件（空 kbID 返回 nil 表示不过滤）
+func kbFilter(kbID string) map[string]any {
+	if kbID == "" {
+		return nil
+	}
+	return map[string]any{"kb_id": kbID}
+}
+
+// sendEvent 发送事件；ctx 取消时返回 false
+func sendEvent(ctx context.Context, out chan<- StreamEvent, ev StreamEvent) bool {
+	select {
+	case out <- ev:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
