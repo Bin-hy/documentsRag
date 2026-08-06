@@ -81,6 +81,21 @@ func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs Histo
 
 // Ask 单轮问答：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
 func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, opts ...AskOption) (*RAGResult, error) {
+	// 策略分支：Decomposition 优先（互斥），其次 Step-Back；不适用/失败落回常规
+	o := AskOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	if e.cfg.DecompositionOn() {
+		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
+			return res, nil
+		}
+	} else if e.cfg.StepBackOn() {
+		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
+			return res, nil
+		}
+	}
+
 	messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
 	if err != nil {
 		return nil, err
@@ -110,8 +125,32 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question string, opts ...AskOption) (<-chan StreamEvent, error) {
 	out := make(chan StreamEvent)
 
+	// 策略分支：Decomposition 优先（互斥），其次 Step-Back；综合结果以流式事件发出
+	o := AskOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+	var strategyRes *RAGResult
+	if e.cfg.DecompositionOn() {
+		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
+			strategyRes = res
+		}
+	} else if e.cfg.StepBackOn() {
+		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
+			strategyRes = res
+		}
+	}
+
 	go func() {
 		defer close(out)
+
+		// 策略路径已生成完整回答：直接流式发出
+		if strategyRes != nil {
+			sendEvent(ctx, out, StreamEvent{Type: EventSources, Sources: strategyRes.Sources})
+			sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: strategyRes.Answer})
+			sendEvent(ctx, out, StreamEvent{Type: EventDone})
+			return
+		}
 
 		messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
 		if err != nil {

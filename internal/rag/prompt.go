@@ -42,21 +42,47 @@ const defaultMultiQueryTemplate = `根据用户问题生成 {{.Count}} 个不同
 用户问题：{{.Question}}
 查询变体：`
 
+// defaultDecomposeJudgeTemplate 判定问题是否适合分解：输出 JSON
+const defaultDecomposeJudgeTemplate = `判断以下问题是否需要分解为多个子问题分别检索。
+需要分解：复合型问题（含多个独立信息需求）、需要对比分析、需要多步骤解答、问题复杂抽象。
+不需要分解：简单事实查询、单一明确问题、定义类问题。
+只输出 JSON：{"decompose": true 或 false, "reason": "简短理由"}，不要其他内容。
+用户问题：{{.Question}}`
+
+// defaultDecomposeListTemplate 生成子问题列表：输出 JSON 数组
+const defaultDecomposeListTemplate = `将以下复杂问题分解为 {{.MaxSub}} 个以内、相互独立且可分别检索的子问题。每个子问题应能独立检索到相关信息。只输出 JSON 数组字符串（如 ["子问题1","子问题2"]），不要任何解释。
+用户问题：{{.Question}}
+子问题：`
+
+// defaultStepBackJudgeTemplate 判定是否需要回退查询并生成回退问题：输出 JSON
+const defaultStepBackJudgeTemplate = `判断以下问题是否适合「先退一步检索更抽象/更广泛的信息，再精答」的策略。
+适合：需要高层概念理解、时间序列/趋势（如「最近」「历年」）、多步推理、需要广泛背景的问题。
+不适合：简单事实查询、定义类问题、需要实时数据的问题。
+如果适合，生成一个更抽象、更通用的回退问题用于检索。
+只输出 JSON：{"step_back": true 或 false, "question": "回退问题（step_back 为 true 时）"}，不要其他内容。
+用户问题：{{.Question}}`
+
 // promptTemplates 一组已加载的模板
 type promptTemplates struct {
-	system     string // 系统提示词（纯文本，不渲染）
-	context    string // 上下文注入模板
-	rewrite    string // 改写模板
-	multiQuery string // 多查询变体生成模板
+	system         string // 系统提示词（纯文本，不渲染）
+	context        string // 上下文注入模板
+	rewrite        string // 改写模板
+	multiQuery     string // 多查询变体生成模板
+	decomposeJudge string // 分解判定模板
+	decomposeList  string // 子问题生成模板
+	stepBackJudge  string // 回退判定模板
 }
 
 // loadPromptTemplates 从配置路径加载模板，读取失败或未配置时使用内置默认
 func loadPromptTemplates(cfg config.RAGConfig) promptTemplates {
 	return promptTemplates{
-		system:     loadOrDefault(cfg.SystemPromptPath, defaultSystemPrompt),
-		context:    loadOrDefault(cfg.ContextTemplatePath, defaultContextTemplate),
-		rewrite:    loadOrDefault(cfg.RewriteTemplatePath, defaultRewriteTemplate),
-		multiQuery: loadOrDefault(cfg.MultiQueryTemplatePath, defaultMultiQueryTemplate),
+		system:         loadOrDefault(cfg.SystemPromptPath, defaultSystemPrompt),
+		context:        loadOrDefault(cfg.ContextTemplatePath, defaultContextTemplate),
+		rewrite:        loadOrDefault(cfg.RewriteTemplatePath, defaultRewriteTemplate),
+		multiQuery:     loadOrDefault(cfg.MultiQueryTemplatePath, defaultMultiQueryTemplate),
+		decomposeJudge: loadOrDefault(cfg.DecompositionTemplatePath, defaultDecomposeJudgeTemplate),
+		decomposeList:  defaultDecomposeListTemplate, // 子问题生成模板暂不开放配置（与判定共用一个路径会产生歧义）
+		stepBackJudge:  loadOrDefault(cfg.StepBackTemplatePath, defaultStepBackJudgeTemplate),
 	}
 }
 
@@ -105,6 +131,37 @@ type multiQueryData struct {
 // renderMultiQuery 渲染多查询变体生成提示
 func renderMultiQuery(history []llm.Message, question string, count int, tpl string) (string, error) {
 	return renderTemplate(tpl, multiQueryData{History: history, Question: question, Count: count})
+}
+
+// decomposeJudgeData 分解判定模板数据
+type decomposeJudgeData struct {
+	Question string
+}
+
+// renderDecomposeJudge 渲染分解判定提示
+func renderDecomposeJudge(question string, tpl string) (string, error) {
+	return renderTemplate(tpl, decomposeJudgeData{Question: question})
+}
+
+// decomposeListData 子问题生成模板数据
+type decomposeListData struct {
+	Question string
+	MaxSub   int
+}
+
+// renderDecomposeList 渲染子问题生成提示
+func renderDecomposeList(question string, maxSub int, tpl string) (string, error) {
+	return renderTemplate(tpl, decomposeListData{Question: question, MaxSub: maxSub})
+}
+
+// stepBackJudgeData 回退判定模板数据
+type stepBackJudgeData struct {
+	Question string
+}
+
+// renderStepBackJudge 渲染回退判定提示
+func renderStepBackJudge(question string, tpl string) (string, error) {
+	return renderTemplate(tpl, stepBackJudgeData{Question: question})
 }
 
 // renderRewrite 渲染 Query 改写提示

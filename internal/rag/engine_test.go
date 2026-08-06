@@ -593,3 +593,242 @@ func TestAsk_MultiQueryDisabled(t *testing.T) {
 		t.Errorf("关闭多查询应单路检索，实际 %d: %v", len(ft.queries), ft.queries)
 	}
 }
+
+// 测试 helper：启用 Decomposition / Step-Back 的配置
+func testDecCfg() config.RAGConfig {
+	cfg := testRAGConfig()
+	on := true
+	cfg.DecompositionEnabled = &on
+	return cfg
+}
+
+// Decomposition 并行模式：判定复杂 → 子问题并发检索 → 综合生成
+func TestAsk_DecompositionParallel(t *testing.T) {
+	cfg := testDecCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"decompose": true, "reason": "复合问题"}`, nil
+			case 2:
+				return `["子问题一","子问题二","子问题三"]`, nil
+			default:
+				return "综合回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "综合回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	if len(res.Sources) == 0 {
+		t.Errorf("综合回答应有引用来源")
+	}
+	// 3 个子问题 → 3 次检索
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 3 {
+		t.Errorf("应检索 3 个子问题，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// Decomposition 顺序模式：子问题顺序检索
+func TestAsk_DecompositionSequential(t *testing.T) {
+	cfg := testDecCfg()
+	cfg.DecompositionMode = "sequential"
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"decompose": true}`, nil
+			case 2:
+				return `["子A","子B"]`, nil
+			default:
+				return "顺序综合回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "顺序综合回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 2 {
+		t.Errorf("顺序模式应检索 2 个子问题，实际 %d", len(ft.queries))
+	}
+}
+
+// 简单问题：判定不分解 → 走常规路径
+func TestAsk_DecompositionSkip(t *testing.T) {
+	cfg := testDecCfg()
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			// 只有一次判定调用返回不分解；后续走常规（改写失败 → 原问题 → 生成）
+			return `{"decompose": false, "reason": "简单事实查询"}`, nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	// 注意：判定返回 false 后落常规路径，但常规的改写也会调用 LLM（genFunc 恒返回非 JSON）→ 改写失败降级原问题
+	if _, err := engine.Ask(context.Background(), "s1", "简单问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	// 常规路径单路检索（原问题）
+	if len(ft.queries) != 1 {
+		t.Errorf("判定不分解应单路检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// Step-Back：判定回退 → 回退问题 + 原问题双检索 → 回答
+func TestAsk_StepBack(t *testing.T) {
+	cfg := testRAGConfig()
+	on := true
+	cfg.StepBackEnabled = &on
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"step_back": true, "question": "近年来地下空间设计趋势"}`, nil
+			default:
+				return "回退回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "最近的地下空间设计趋势是什么")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "回退回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	// 回退问题 + 原问题 = 2 次检索
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 2 {
+		t.Errorf("Step-Back 应检索 2 次（回退+原问题），实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// 互斥：两策略都启用时仅 Decomposition 生效
+func TestAsk_StrategiesMutualExclusion(t *testing.T) {
+	cfg := testDecCfg()
+	on := true
+	cfg.StepBackEnabled = &on
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"decompose": true}`, nil
+			case 2:
+				return `["子1","子2"]`, nil
+			default:
+				return "分解回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "分解回答" {
+		t.Errorf("应走 Decomposition，回答错误: %q", res.Answer)
+	}
+	// 只有 3 次 LLM 调用（判定+子问题+综合），无回退判定（第 4 次不会发生）
+	if genCalls > 3 {
+		t.Errorf("互斥失败：Step-Back 判定不应被调用，实际 LLM 调用 %d 次", genCalls)
+	}
+}
+
+// 判定失败：降级常规路径，问答不中断
+func TestAsk_DecompositionFallback(t *testing.T) {
+	cfg := testDecCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "非 JSON 输出", nil // 判定解析失败 → 降级
+			}
+			if genCalls <= 2 {
+				return "", errors.New("改写失败") // 常规改写失败 → 用原问题
+			}
+			return "降级回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题")
+	if err != nil {
+		t.Fatalf("判定失败应降级而非报错: %v", err)
+	}
+	if res.Answer != "降级回答" {
+		t.Errorf("降级回答错误: %q", res.Answer)
+	}
+}

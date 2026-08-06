@@ -115,6 +115,14 @@ rag:
   multi_query_count: 3
   # 多路检索并发上限（默认 3）
   multi_query_concurrency: 3
+  # 是否启用 Decomposition 问题分解（false/不配置 = 关闭；true = LLM 判定复杂时拆子问题检索综合）
+  decomposition_enabled: false
+  # 分解模式：parallel（并行独立）/ sequential（顺序，前序子问题上下文作为后续参考）
+  decomposition_mode: parallel
+  # 子问题上限（默认 5）
+  decomposition_max_sub: 5
+  # 是否启用 Step-Back 回退查询（false/不配置 = 关闭；true = 判定需要时先回退检索再精答）
+  step_back_enabled: false
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数

@@ -90,19 +90,25 @@ type LLMConfig struct {
 
 // RAGConfig RAG 编排配置
 type RAGConfig struct {
-	TopK                   int    `yaml:"top_k"`
-	MaxContextTokens       int    `yaml:"max_context_tokens"`
-	MaxChunks              int    `yaml:"max_chunks"`
-	EnableRewrite          *bool  `yaml:"enable_rewrite"`
-	MultiQueryEnabled      *bool  `yaml:"multi_query_enabled"`
-	MultiQueryCount        int    `yaml:"multi_query_count"`
-	MultiQueryConcurrency  int    `yaml:"multi_query_concurrency"`
-	MultiQueryTemplatePath string `yaml:"multi_query_template_path"`
-	HistoryCapacity        int    `yaml:"history_capacity"`
-	HistoryLimit           int    `yaml:"history_limit"`
-	SystemPromptPath       string `yaml:"system_prompt_path"`
-	ContextTemplatePath    string `yaml:"context_template_path"`
-	RewriteTemplatePath    string `yaml:"rewrite_template_path"`
+	TopK                      int    `yaml:"top_k"`
+	MaxContextTokens          int    `yaml:"max_context_tokens"`
+	MaxChunks                 int    `yaml:"max_chunks"`
+	EnableRewrite             *bool  `yaml:"enable_rewrite"`
+	MultiQueryEnabled         *bool  `yaml:"multi_query_enabled"`
+	MultiQueryCount           int    `yaml:"multi_query_count"`
+	MultiQueryConcurrency     int    `yaml:"multi_query_concurrency"`
+	MultiQueryTemplatePath    string `yaml:"multi_query_template_path"`
+	DecompositionEnabled      *bool  `yaml:"decomposition_enabled"`
+	DecompositionMode         string `yaml:"decomposition_mode"`
+	DecompositionMaxSub       int    `yaml:"decomposition_max_sub"`
+	StepBackEnabled           *bool  `yaml:"step_back_enabled"`
+	DecompositionTemplatePath string `yaml:"decomposition_template_path"`
+	StepBackTemplatePath      string `yaml:"step_back_template_path"`
+	HistoryCapacity           int    `yaml:"history_capacity"`
+	HistoryLimit              int    `yaml:"history_limit"`
+	SystemPromptPath          string `yaml:"system_prompt_path"`
+	ContextTemplatePath       string `yaml:"context_template_path"`
+	RewriteTemplatePath       string `yaml:"rewrite_template_path"`
 }
 
 // RewriteEnabled 是否启用 Query 改写（nil 视为启用，即默认开启）
@@ -113,6 +119,16 @@ func (c RAGConfig) RewriteEnabled() bool {
 // MultiQueryOn 是否启用多查询（nil 视为关闭，保守默认保持现状）
 func (c RAGConfig) MultiQueryOn() bool {
 	return c.MultiQueryEnabled != nil && *c.MultiQueryEnabled
+}
+
+// DecompositionOn 是否启用问题分解（nil 视为关闭）
+func (c RAGConfig) DecompositionOn() bool {
+	return c.DecompositionEnabled != nil && *c.DecompositionEnabled
+}
+
+// StepBackOn 是否启用回退查询（nil 视为关闭）
+func (c RAGConfig) StepBackOn() bool {
+	return c.StepBackEnabled != nil && *c.StepBackEnabled
 }
 
 // PostgresConfig 元数据存储配置
@@ -251,6 +267,13 @@ func (c *Config) applyDefaults() {
 	}
 	if c.RAG.MultiQueryConcurrency <= 0 {
 		c.RAG.MultiQueryConcurrency = 3
+	}
+	// Decomposition / Step-Back 默认值
+	if c.RAG.DecompositionMode == "" {
+		c.RAG.DecompositionMode = "parallel"
+	}
+	if c.RAG.DecompositionMaxSub <= 0 {
+		c.RAG.DecompositionMaxSub = 5
 	}
 	// Loader 默认值
 	if c.Loader.MinReadableChars == 0 {
