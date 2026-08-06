@@ -1,6 +1,15 @@
+// BinRag API
+//
+//	@title						BinRag API
+//	@version					1.0
+//	@description				BinRag 企业级文档知识库问答系统 API。所有接口需 `Authorization: Bearer <API Key>`（除 Swagger 文档页本身）。统一响应格式 `{code, message, data}`，code=0 表示成功，非 0 为业务码（400/401/404/500）。
+//	@securityDefinitions.apikey	ApiKeyAuth
+//	@in							header
+//	@name						Authorization
 package api
 
 import (
+	_ "github.com/Bin-hy/bin-rag/internal/api/docs"
 	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/loader"
 	"github.com/Bin-hy/bin-rag/internal/rag"
@@ -8,6 +17,8 @@ import (
 	"github.com/Bin-hy/bin-rag/internal/store"
 	"github.com/Bin-hy/bin-rag/internal/vectorstore"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 // Dependencies API 层依赖集合
@@ -47,6 +58,9 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		engine:   deps.Engine,
 		history:  deps.History,
 	}
+
+	// Swagger 文档（公开访问，接口实测仍需 API Key）
+	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	v1 := r.Group("/api/v1")
 	v1.Use(Auth(deps.Store, deps.Config.AuthEnabled))

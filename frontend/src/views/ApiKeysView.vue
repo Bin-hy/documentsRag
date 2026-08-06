@@ -19,7 +19,7 @@ const createdKey = ref<CreateKeyResult | null>(null)
 async function load() {
   loading.value = true
   try {
-    keys.value = await keyApi.listKeys()
+    keys.value = (await keyApi.listKeys()) ?? []
   } catch (err) {
     ElMessage.error((err as Error).message)
   } finally {

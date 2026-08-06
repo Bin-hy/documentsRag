@@ -24,6 +24,7 @@ frontend/node_modules/
 bin/
 binrag-server
 /desktop
+/eval
 *.exe
 *.test
 

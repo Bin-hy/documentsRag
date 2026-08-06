@@ -27,7 +27,7 @@ export const useDocStore = defineStore('doc', {
       this.kbId = kbId
       this.loading = true
       try {
-        this.documents = await docApi.listDocuments(kbId)
+        this.documents = (await docApi.listDocuments(kbId)) ?? []
       } finally {
         this.loading = false
       }

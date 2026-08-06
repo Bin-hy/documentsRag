@@ -1,0 +1,831 @@
+definitions:
+  api.Response:
+    properties:
+      code:
+        type: integer
+      data: {}
+      message:
+        type: string
+    type: object
+  api.chatRequest:
+    properties:
+      kb_id:
+        description: 知识库范围，空表示不限定
+        type: string
+      question:
+        type: string
+      session_id:
+        type: string
+    required:
+    - question
+    - session_id
+    type: object
+  api.createAPIKeyRequest:
+    properties:
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  api.createKBRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  api.keyView:
+    properties:
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: string
+      last_used_at:
+        type: string
+      name:
+        type: string
+    type: object
+  api.toggleAPIKeyRequest:
+    properties:
+      enabled:
+        description: 不能用 required：false 是合法值
+        type: boolean
+    type: object
+  api.updateKBRequest:
+    properties:
+      description:
+        type: string
+      name:
+        type: string
+    required:
+    - name
+    type: object
+  llm.Message:
+    properties:
+      content:
+        type: string
+      role:
+        type: string
+    type: object
+  rag.RAGResult:
+    properties:
+      answer:
+        type: string
+      sources:
+        items:
+          $ref: '#/definitions/rag.Source'
+        type: array
+    type: object
+  rag.Source:
+    properties:
+      filename:
+        description: 来源文件名（来自元数据）
+        type: string
+      heading:
+        description: 标题上下文
+        type: string
+      id:
+        description: 检索片段 ID
+        type: string
+      score:
+        description: 检索分数
+        type: number
+    type: object
+  store.Document:
+    properties:
+      chunkIDs:
+        items:
+          type: string
+        type: array
+      createdAt:
+        type: string
+      filePath:
+        type: string
+      filename:
+        type: string
+      format:
+        type: string
+      id:
+        type: string
+      kbid:
+        type: string
+      size:
+        format: int64
+        type: integer
+      status:
+        description: pending / processing / completed / failed
+        type: string
+      taskID:
+        type: string
+    type: object
+  store.KnowledgeBase:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      updatedAt:
+        type: string
+    type: object
+  store.Task:
+    properties:
+      createdAt:
+        type: string
+      documentID:
+        type: string
+      errorMessage:
+        type: string
+      id:
+        type: string
+      kbid:
+        type: string
+      retryCount:
+        type: integer
+      status:
+        description: pending / processing / completed / failed
+        type: string
+      updatedAt:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: 'BinRag 企业级文档知识库问答系统 API。所有接口需 `Authorization: Bearer <API Key>`（除
+    Swagger 文档页本身）。统一响应格式 `{code, message, data}`，code=0 表示成功，非 0 为业务码（400/401/404/500）。'
+  title: BinRag API
+  version: "1.0"
+paths:
+  /api/v1/api-keys:
+    get:
+      description: 列出全部 API Key（不含 hash），含启用状态与最后使用时间
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.keyView'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: API Key 列表
+      tags:
+      - API Key
+    post:
+      consumes:
+      - application/json
+      description: 创建 API Key，明文仅返回一次（后续不可再查），库中只存 SHA-256 hash
+      parameters:
+      - description: Key 名称
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.createAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    id:
+                      type: string
+                    key:
+                      type: string
+                    name:
+                      type: string
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 创建 API Key
+      tags:
+      - API Key
+  /api/v1/api-keys/{id}:
+    delete:
+      description: 按 ID 删除 API Key
+      parameters:
+      - description: API Key ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    id:
+                      type: string
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 删除 API Key
+      tags:
+      - API Key
+  /api/v1/api-keys/{id}/toggle:
+    post:
+      consumes:
+      - application/json
+      description: 启用或停用指定 API Key；停用后该 Key 请求返回 401
+      parameters:
+      - description: API Key ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 启用状态
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.toggleAPIKeyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    enabled:
+                      type: boolean
+                    id:
+                      type: string
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 启停 API Key
+      tags:
+      - API Key
+  /api/v1/chat:
+    post:
+      consumes:
+      - application/json
+      description: '接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream
+        或 query stream=1 时返回 SSE 流式（事件序列：sources 引用来源 → chunk×N 文本增量 → done 正常结束 /
+        error 出错终止）'
+      parameters:
+      - description: 问答请求
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.chatRequest'
+      produces:
+      - application/json
+      - text/event-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/rag.RAGResult'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 问答
+      tags:
+      - 问答
+  /api/v1/chat/history:
+    get:
+      description: 按会话 ID 查询对话历史消息，时间正序
+      parameters:
+      - description: 会话 ID
+        in: query
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/llm.Message'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 对话历史
+      tags:
+      - 问答
+  /api/v1/documents:
+    get:
+      description: 按知识库查询文档列表，含文件名、大小、格式、入库状态、创建时间
+      parameters:
+      - description: 知识库 ID
+        in: query
+        name: kb_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/store.Document'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 文档列表
+      tags:
+      - 文档
+  /api/v1/documents/{id}:
+    delete:
+      description: 删除文档：从向量库删除该文档全部 chunk、从 BM25 索引移除、更新文档记录与任务状态
+      parameters:
+      - description: 文档 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    id:
+                      type: string
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 删除文档
+      tags:
+      - 文档
+  /api/v1/documents/upload:
+    post:
+      consumes:
+      - multipart/form-data
+      description: 上传文档到指定知识库，保存文件并创建入库任务，立即返回 task_id；入库异步执行（Load→Chunk→Embed→Store）
+      parameters:
+      - description: 知识库 ID
+        in: query
+        name: kb_id
+        required: true
+        type: string
+      - description: 文档文件（支持 md/txt/pdf/docx 等）
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    document_id:
+                      type: string
+                    task_id:
+                      type: string
+                  type: object
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 上传文档
+      tags:
+      - 文档
+  /api/v1/knowledge-bases:
+    get:
+      description: 列出全部知识库，按创建时间倒序
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/store.KnowledgeBase'
+                  type: array
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 知识库列表
+      tags:
+      - 知识库
+    post:
+      consumes:
+      - application/json
+      description: 创建一个新的知识库，返回知识库完整信息
+      parameters:
+      - description: 知识库信息
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.createKBRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.KnowledgeBase'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 创建知识库
+      tags:
+      - 知识库
+  /api/v1/knowledge-bases/{id}:
+    delete:
+      description: 删除知识库及其全部文档、向量与索引数据
+      parameters:
+      - description: 知识库 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    id:
+                      type: string
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 删除知识库
+      tags:
+      - 知识库
+    get:
+      description: 按 ID 查询单个知识库
+      parameters:
+      - description: 知识库 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.KnowledgeBase'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 知识库详情
+      tags:
+      - 知识库
+    put:
+      consumes:
+      - application/json
+      description: 更新知识库的名称与描述
+      parameters:
+      - description: 知识库 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 更新内容
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.updateKBRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.KnowledgeBase'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 更新知识库
+      tags:
+      - 知识库
+  /api/v1/tasks/{id}:
+    get:
+      description: 按任务 ID 查询入库任务状态（pending/processing/completed/failed）与错误信息
+      parameters:
+      - description: 任务 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.Task'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 任务状态
+      tags:
+      - 任务
+  /api/v1/tasks/{id}/retry:
+    post:
+      description: 将 failed 状态的任务重置为 pending 重新入库，重试次数清零；仅 failed 可重试
+      parameters:
+      - description: 任务 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/store.Task'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 重试任务
+      tags:
+      - 任务
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

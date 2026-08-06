@@ -16,6 +16,8 @@
 - **多知识库隔离** — 单向量集合 + payload 过滤，检索按知识库范围严格隔离
 - **异步入库** — 上传即返回任务 ID，后台 worker 池执行入库，失败自动/手动重试，状态持久化
 - **API Key 认证** — 密钥哈希存储、启停管理、使用时间追踪，接口安全可控
+- **Swagger 文档** — 基于 swaggo 自动生成的 OpenAPI 3 文档与交互式 UI（`/swagger/`），全部 16 条接口含参数与响应说明
+- **RAG 评估** — 独立评估 CLI（`cmd/eval`）：数据集驱动的 Recall@K 检索评估 + LLM-as-Judge 准确性/忠实度评分，为分块/Embedding/Prompt 调优提供量化依据
 - **Web 前端界面** — Vue 3 + TypeScript 单页应用：对话问答（流式打字机 / Markdown 渲染 / 引用来源卡片 / 多会话）、知识库管理、文档拖拽上传与任务跟踪、API Key 管理，由 Go 二进制直接托管（单一可执行文件）
 - **桌面应用** — Wails v3 打包 macOS 安装包（.app / .dmg），内嵌完整后端，安装即用；Web 与桌面共用同一套前端代码
 
@@ -69,6 +71,9 @@ graph TB
 | 元数据存储 | PostgreSQL（pgx / 连接池） |
 | Embedding / LLM | OpenAI 兼容接口（GPT / 豆包 / DeepSeek / 本地 vLLM 等，base_url 切换） |
 | 检索 | 向量 + BM25 + RRF 融合 + Cross-encoder 重排序 |
+| 评估 | 数据集 + Recall@K + LLM-as-Judge（准确性/忠实度），`cmd/eval` CLI |
+| API 文档 | swaggo 生成 OpenAPI 3 + Swagger UI（`/swagger/`） |
+| 前端测试 | vitest（SSE 解析 / 流式降级状态机） |
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus + Pinia + marked/highlight.js |
 | 桌面壳 | Wails v3（macOS .app / .dmg，内嵌 Go 后端） |
 | 认证 | API Key（SHA-256 哈希存储） |
@@ -146,28 +151,28 @@ BINRAG_CONFIG=configs/prod.yaml go run ./cmd/server
 
 ```bash
 # 创建知识库
-curl -X POST http://localhost:8080/api/v1/knowledge-bases \
+curl -X POST http://localhost:8085/api/v1/knowledge-bases \
   -H "Authorization: Bearer sk-your-bootstrap-key" \
   -H "Content-Type: application/json" \
   -d '{"name":"产品文档库","description":"产品手册与 FAQ"}'
 
 # 上传文档（异步入库，返回 task_id）
-curl -X POST "http://localhost:8080/api/v1/documents/upload?kb_id=<kb_id>" \
+curl -X POST "http://localhost:8085/api/v1/documents/upload?kb_id=<kb_id>" \
   -H "Authorization: Bearer sk-your-bootstrap-key" \
   -F "file=@docs/intro.md"
 
 # 查询任务状态
-curl http://localhost:8080/api/v1/tasks/<task_id> \
+curl http://localhost:8085/api/v1/tasks/<task_id> \
   -H "Authorization: Bearer sk-your-bootstrap-key"
 
 # 普通问答
-curl -X POST http://localhost:8080/api/v1/chat \
+curl -X POST http://localhost:8085/api/v1/chat \
   -H "Authorization: Bearer sk-your-bootstrap-key" \
   -H "Content-Type: application/json" \
   -d '{"session_id":"demo","question":"产品支持哪些文档格式？","kb_id":"<kb_id>"}'
 
 # 流式问答（SSE）
-curl -N -X POST "http://localhost:8080/api/v1/chat?stream=1" \
+curl -N -X POST "http://localhost:8085/api/v1/chat?stream=1" \
   -H "Authorization: Bearer sk-your-bootstrap-key" \
   -H "Content-Type: application/json" \
   -d '{"session_id":"demo","question":"如何部署？","kb_id":"<kb_id>"}'
@@ -230,20 +235,52 @@ wails3 task package:dmg      # 可选：再生成 bin/BinRag.dmg 安装映像
 | GET | `/api/v1/chat/history?session_id=` | 对话历史 |
 | POST / GET / DELETE | `/api/v1/api-keys` | API Key 创建 / 列表 / 删除 |
 | POST | `/api/v1/api-keys/:id/toggle` | 启用 / 停用 API Key |
+| GET | `/swagger/index.html` | Swagger UI（公开） |
+| GET | `/swagger/doc.json` | OpenAPI 3 文档 JSON（公开） |
 
-所有接口统一响应格式：`{"code": 0, "message": "ok", "data": ...}`，除 `/api/v1/api-keys` 外均需 `Authorization: Bearer <api_key>`。
+所有接口统一响应格式：`{"code": 0, "message": "ok", "data": ...}`；全部 `/api/v1/*` 接口（含 API Key 管理）均需 `Authorization: Bearer <api_key>`。Swagger 文档页 `/swagger/` 公开可访问（接口实测仍需 Key）。
+
+## 📊 RAG 评估
+
+`cmd/eval` 提供独立的 RAG 评估 CLI，以数据集驱动量化检索与问答质量，为分块 / Embedding / Prompt 调优提供依据。
+
+```bash
+# 仅检索评估（Recall@K，不调 LLM）
+go run ./cmd/eval -c configs/config.local.yaml -d dataset.json -m retrieve
+
+# 全量评估（检索 + 问答 + LLM-as-Judge 准确性与忠实度）
+go run ./cmd/eval -c configs/config.local.yaml -d dataset.json -m full -o report.json
+```
+
+数据集格式（`.json` 或 `.jsonl`）：
+
+```json
+{
+  "name": "示例评估集",
+  "samples": [
+    { "question": "产品支持哪些文档格式？", "answer": "TXT/Markdown/PDF 等",
+      "expected_ids": ["<chunk_id>"], "kb_id": "<kb_id,可选>" }
+  ]
+}
+```
+
+- `expected_ids`：期望检索命中的 chunk ID（入库时生成的 chunk_id，可从向量库 payload 或文档 `ChunkIDs` 获取），用于 Recall@K 判定
+- `answer`：标准答案，`full` 模式下用于 LLM 准确性评分（可选）
+- 模式：`retrieve`（仅检索）/ `qa`（检索+问答）/ `full`（全量含 LLM 指标），K 值默认 `1,3,5`（`-k` 覆盖）
 
 ## 📁 项目结构
 
 ```
 cmd/
 ├── server/              Web 服务入口（-c / --config 指定配置文件，托管前端静态资源）
-└── desktop/             桌面应用入口（Wails v3：内嵌后端 + 窗口加载本地服务）
+├── desktop/             桌面应用入口（Wails v3：内嵌后端 + 窗口加载本地服务）
+└── eval/                RAG 评估 CLI（数据集 + Recall@K + LLM-as-Judge）
 frontend/                Vue 3 + TypeScript 前端（Web 与桌面共用，npm run build 产物进 internal/webui/dist）
 internal/
 ├── app/                 服务装配（PostgreSQL / worker / 引擎 / 路由，Web 与桌面共用）
 ├── webui/               前端静态资源托管（go:embed dist + SPA 回退）
-├── api/                 HTTP 层：路由、中间件（认证/日志/CORS/限流）、Handler、SSE
+├── api/                 HTTP 层：路由、中间件（认证/日志/CORS/限流）、Handler、SSE、Swagger 注解
+├── eval/                RAG 评估：数据集加载 / Recall@K / LLM-as-Judge / 报告
 ├── store/               PostgreSQL 元数据存储：知识库/文档/任务/API Key/对话历史
 ├── task/                异步入库 worker 池（状态机 + 失败重试 + 重启恢复）
 ├── loader/              文档加载器（TXT/Markdown/PDF/DOCX/CSV/Excel/HTML）
@@ -271,6 +308,7 @@ docs/                    各阶段的 spec / plan / task / checklist 设计文�
 | 六 | LLM 集成与 RAG 编排（改写 / 流式 / 历史） | ✅ 完成 |
 | 七 | API 层与知识库管理（REST / 异步入库 / 认证） | ✅ 完成 |
 | 八 | 前端界面（Web SPA + Wails 桌面，对话/知识库/文档/密钥管理） | ✅ 完成 |
+| 九 | RAG 评估与优化（评估 CLI：Recall@K / LLM-as-Judge，为调优提供量化依据） | ✅ 完成 |
 
 每个阶段的完整设计文档（spec → plan → task → checklist）见 `docs/` 目录。
 

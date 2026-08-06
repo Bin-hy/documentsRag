@@ -42,7 +42,7 @@ func (s *pgStore) ListTasks(ctx context.Context, kbID string) ([]Task, error) {
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	tasks := make([]Task, 0)
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(&t.ID, &t.KBID, &t.DocumentID, &t.Status, &t.RetryCount,
@@ -77,7 +77,7 @@ func (s *pgStore) ClaimPendingTasks(ctx context.Context, limit int) ([]Task, err
 	}
 	defer rows.Close()
 
-	var tasks []Task
+	tasks := make([]Task, 0)
 	for rows.Next() {
 		var t Task
 		if err := rows.Scan(&t.ID, &t.KBID, &t.DocumentID, &t.Status, &t.RetryCount,

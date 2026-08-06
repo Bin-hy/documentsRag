@@ -1,7 +1,9 @@
 package loader
 
-import "context"
-import "io"
+import (
+	"context"
+	"io"
+)
 
 // BlockType 内容块类型
 type BlockType int

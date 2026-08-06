@@ -28,7 +28,7 @@ func (s *pgStore) ListKBs(ctx context.Context) ([]KnowledgeBase, error) {
 	}
 	defer rows.Close()
 
-	var kbs []KnowledgeBase
+	kbs := make([]KnowledgeBase, 0)
 	for rows.Next() {
 		var kb KnowledgeBase
 		if err := rows.Scan(&kb.ID, &kb.Name, &kb.Description, &kb.CreatedAt, &kb.UpdatedAt); err != nil {

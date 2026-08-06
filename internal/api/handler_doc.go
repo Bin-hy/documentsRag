@@ -18,6 +18,21 @@ import (
 )
 
 // UploadDocument 上传文档（multipart：kb_id + file），返回 task_id，异步入库
+//
+//	@Summary		上传文档
+//	@Description	上传文档到指定知识库，保存文件并创建入库任务，立即返回 task_id；入库异步执行（Load→Chunk→Embed→Store）
+//	@Tags			文档
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Param			kb_id	query		string	true	"知识库 ID"
+//	@Param			file	formData	file	true	"文档文件（支持 md/txt/pdf/docx 等）"
+//	@Success		200		{object}	Response{data=object{task_id=string,document_id=string}}
+//	@Failure		400		{object}	Response
+//	@Failure		401		{object}	Response
+//	@Failure		404		{object}	Response
+//	@Failure		500		{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/documents/upload [post]
 func (h *handler) UploadDocument(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -113,6 +128,18 @@ func (h *handler) UploadDocument(c *gin.Context) {
 }
 
 // ListDocuments 按知识库列出文档
+//
+//	@Summary		文档列表
+//	@Description	按知识库查询文档列表，含文件名、大小、格式、入库状态、创建时间
+//	@Tags			文档
+//	@Produce		json
+//	@Param			kb_id	query		string	true	"知识库 ID"
+//	@Success		200		{object}	Response{data=[]store.Document}
+//	@Failure		400		{object}	Response
+//	@Failure		401		{object}	Response
+//	@Failure		500		{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/documents [get]
 func (h *handler) ListDocuments(c *gin.Context) {
 	kbID := c.Query("kb_id")
 	if kbID == "" {
@@ -128,6 +155,18 @@ func (h *handler) ListDocuments(c *gin.Context) {
 }
 
 // DeleteDocument 删除文档：向量库 + BM25 索引 + 记录
+//
+//	@Summary		删除文档
+//	@Description	删除文档：从向量库删除该文档全部 chunk、从 BM25 索引移除、更新文档记录与任务状态
+//	@Tags			文档
+//	@Produce		json
+//	@Param			id	path		string	true	"文档 ID"
+//	@Success		200	{object}	Response{data=object{id=string}}
+//	@Failure		401	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/documents/{id} [delete]
 func (h *handler) DeleteDocument(c *gin.Context) {
 	ctx := c.Request.Context()
 	docID := c.Param("id")

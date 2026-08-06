@@ -15,6 +15,20 @@ type chatRequest struct {
 }
 
 // Chat 普通问答（返回回答与引用来源）
+//
+//	@Summary		问答
+//	@Description	接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止）
+//	@Tags			问答
+//	@Accept			json
+//	@Produce		json
+//	@Produce		text/event-stream
+//	@Param			body	body		chatRequest	true	"问答请求"
+//	@Success		200		{object}	Response{data=rag.RAGResult}
+//	@Failure		400		{object}	Response
+//	@Failure		401		{object}	Response
+//	@Failure		500		{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/chat [post]
 func (h *handler) Chat(c *gin.Context) {
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -32,6 +46,7 @@ func (h *handler) Chat(c *gin.Context) {
 
 // ChatStream SSE 流式问答：事件 sources → chunk×N → done（或 error）
 // 触发条件：Accept 头含 text/event-stream 或 query 带 stream=1
+// 注：本 handler 与 Chat 同路径同方法，文档合并到 Chat 的注解（OpenAPI 不允许同 path+method 多 operation）；此处仅保留函数注释
 func (h *handler) ChatStream(c *gin.Context) {
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

@@ -205,3 +205,43 @@ func (a *ragHistoryAdapter) Get(sessionID string, limit int) ([]llm.Message, err
 func (a *ragHistoryAdapter) Clear(sessionID string) error {
 	return a.inner.Clear(context.Background(), sessionID)
 }
+
+// EvalDeps 评估用依赖集合（不依赖 Postgres/worker/HTTP）
+type EvalDeps struct {
+	Retriever retriever.Retriever
+	Engine    rag.Engine
+	LLM       llm.LLM
+	Closer    func() error
+}
+
+// AssembleEvalDeps 装配评估所需组件：embedder → vectorstore → bm25 → retriever → engine → llm。
+// 与 New 相比：不连接 PostgreSQL、不启动入库 worker、不构建 HTTP 路由（评测无需这些）。
+func AssembleEvalDeps(cfg *config.Config) (*EvalDeps, error) {
+	ctx := context.Background()
+
+	emb := embedding.NewEmbedder(cfg.Embedder)
+	vs, err := vectorstore.NewQdrantStore(cfg.VectorStore)
+	if err != nil {
+		return nil, fmt.Errorf("初始化向量存储失败: %w", err)
+	}
+	if err := vs.EnsureCollection(ctx); err != nil {
+		vs.Close()
+		return nil, fmt.Errorf("初始化向量集合失败: %w", err)
+	}
+
+	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer())
+	llmClient := llm.NewLLM(cfg.LLM)
+	rr := reranker.NewReranker(cfg.Reranker)
+	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
+	engine := rag.NewEngine(cfg.RAG, llmClient, rt, rag.NewMemoryHistoryStore(cfg.RAG.HistoryCapacity))
+
+	closer := func() error {
+		return vs.Close()
+	}
+	return &EvalDeps{
+		Retriever: rt,
+		Engine:    engine,
+		LLM:       llmClient,
+		Closer:    closer,
+	}, nil
+}

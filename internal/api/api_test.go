@@ -210,6 +210,7 @@ type fakeEngine struct {
 	answer       string
 	sources      []rag.Source
 	streamChunks []string
+	streamErr    error // 非 nil 时 StreamAsk 发 error 事件替代 chunk/done
 	lastQuestion string
 	lastAskOpts  []rag.AskOption
 	askErr       error
@@ -227,12 +228,21 @@ func (f *fakeEngine) Ask(ctx context.Context, sessionID string, question string,
 }
 
 func (f *fakeEngine) StreamAsk(ctx context.Context, sessionID string, question string, opts ...rag.AskOption) (<-chan rag.StreamEvent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastQuestion = question
+	f.lastAskOpts = opts
+
 	ch := make(chan rag.StreamEvent, len(f.streamChunks)+2)
 	ch <- rag.StreamEvent{Type: rag.EventSources, Sources: f.sources}
-	for _, s := range f.streamChunks {
-		ch <- rag.StreamEvent{Type: rag.EventChunk, Content: s}
+	if f.streamErr != nil {
+		ch <- rag.StreamEvent{Type: rag.EventError, Err: f.streamErr}
+	} else {
+		for _, s := range f.streamChunks {
+			ch <- rag.StreamEvent{Type: rag.EventChunk, Content: s}
+		}
+		ch <- rag.StreamEvent{Type: rag.EventDone}
 	}
-	ch <- rag.StreamEvent{Type: rag.EventDone}
 	close(ch)
 	return ch, nil
 }
@@ -621,6 +631,55 @@ func TestChatSSE(t *testing.T) {
 	}
 	if !strings.Contains(body, "event:done") {
 		t.Errorf("缺少 done 事件:\n%s", body)
+	}
+}
+
+// SSE error 事件：流中出错发 error 事件终止，不再有 chunk/done
+func TestChatSSEError(t *testing.T) {
+	env := newTestEnv(t)
+	env.engine.streamErr = errors.New("模型生成超时")
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat?stream=1",
+		map[string]string{"session_id": "s1", "question": "流式问题"}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("SSE 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event:error") {
+		t.Errorf("缺少 error 事件:\n%s", body)
+	}
+	if !strings.Contains(body, "模型生成超时") {
+		t.Errorf("error 事件缺少错误信息:\n%s", body)
+	}
+	if strings.Contains(body, "event:done") {
+		t.Errorf("error 后不应再发 done 事件:\n%s", body)
+	}
+	if strings.Contains(body, "event:chunk") {
+		t.Errorf("error 后不应再发 chunk 事件:\n%s", body)
+	}
+}
+
+// SSE 空流：无 chunk 直接 sources → done
+func TestChatSSEEmptyStream(t *testing.T) {
+	env := newTestEnv(t)
+	env.engine.streamChunks = nil
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat?stream=1",
+		map[string]string{"session_id": "s1", "question": "空流问题"}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("SSE 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event:sources") {
+		t.Errorf("缺少 sources 事件:\n%s", body)
+	}
+	if !strings.Contains(body, "event:done") {
+		t.Errorf("缺少 done 事件:\n%s", body)
+	}
+	if strings.Contains(body, "event:chunk") {
+		t.Errorf("空流不应有 chunk 事件:\n%s", body)
 	}
 }
 

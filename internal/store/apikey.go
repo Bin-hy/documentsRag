@@ -31,7 +31,7 @@ func (s *pgStore) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 	}
 	defer rows.Close()
 
-	var keys []APIKey
+	keys := make([]APIKey, 0)
 	for rows.Next() {
 		var k APIKey
 		if err := rows.Scan(&k.ID, &k.Name, &k.KeyHash, &k.Enabled, &k.LastUsedAt, &k.CreatedAt); err != nil {

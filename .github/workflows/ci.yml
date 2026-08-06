@@ -47,6 +47,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: 前端单元测试（vitest：SSE 解析 / 流式降级状态机）
+        working-directory: frontend
+        run: npm test
+
       # ---- Go 静态检查与编译 ----
       - name: Go 编译
         run: go build ./...
@@ -59,4 +63,4 @@ jobs:
         run: go test ./...
 
       - name: 关键包数据竞争检测
-        run: go test -race ./internal/store/... ./internal/task/... ./internal/api/...
+        run: go test -race ./internal/store/... ./internal/task/... ./internal/api/... ./internal/eval/...

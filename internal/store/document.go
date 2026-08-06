@@ -36,7 +36,7 @@ func (s *pgStore) ListDocuments(ctx context.Context, kbID string) ([]Document, e
 	}
 	defer rows.Close()
 
-	var docs []Document
+	docs := make([]Document, 0)
 	for rows.Next() {
 		doc, err := scanDocument(rows)
 		if err != nil {

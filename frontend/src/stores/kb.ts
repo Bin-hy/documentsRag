@@ -13,7 +13,7 @@ export const useKbStore = defineStore('kb', {
     async load() {
       this.loading = true
       try {
-        this.kbs = await kbApi.listKbs()
+        this.kbs = (await kbApi.listKbs()) ?? []
       } finally {
         this.loading = false
       }

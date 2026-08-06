@@ -9,6 +9,18 @@ import (
 )
 
 // GetTask 任务状态
+//
+//	@Summary		任务状态
+//	@Description	按任务 ID 查询入库任务状态（pending/processing/completed/failed）与错误信息
+//	@Tags			任务
+//	@Produce		json
+//	@Param			id	path		string	true	"任务 ID"
+//	@Success		200	{object}	Response{data=store.Task}
+//	@Failure		401	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/tasks/{id} [get]
 func (h *handler) GetTask(c *gin.Context) {
 	task, err := h.store.GetTask(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -23,6 +35,19 @@ func (h *handler) GetTask(c *gin.Context) {
 }
 
 // RetryTask 手动重试失败任务（failed → pending，重试次数清零）
+//
+//	@Summary		重试任务
+//	@Description	将 failed 状态的任务重置为 pending 重新入库，重试次数清零；仅 failed 可重试
+//	@Tags			任务
+//	@Produce		json
+//	@Param			id	path		string	true	"任务 ID"
+//	@Success		200	{object}	Response{data=store.Task}
+//	@Failure		400	{object}	Response
+//	@Failure		401	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/tasks/{id}/retry [post]
 func (h *handler) RetryTask(c *gin.Context) {
 	ctx := c.Request.Context()
 	task, err := h.store.GetTask(ctx, c.Param("id"))

@@ -23,6 +23,19 @@ type updateKBRequest struct {
 }
 
 // CreateKB 创建知识库
+//
+//	@Summary		创建知识库
+//	@Description	创建一个新的知识库，返回知识库完整信息
+//	@Tags			知识库
+//	@Accept			json
+//	@Produce		json
+//	@Param			body	body		createKBRequest	true	"知识库信息"
+//	@Success		200		{object}	Response{data=store.KnowledgeBase}
+//	@Failure		400		{object}	Response
+//	@Failure		401		{object}	Response
+//	@Failure		500		{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/knowledge-bases [post]
 func (h *handler) CreateKB(c *gin.Context) {
 	var req createKBRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -45,6 +58,16 @@ func (h *handler) CreateKB(c *gin.Context) {
 }
 
 // ListKBs 知识库列表
+//
+//	@Summary		知识库列表
+//	@Description	列出全部知识库，按创建时间倒序
+//	@Tags			知识库
+//	@Produce		json
+//	@Success		200	{object}	Response{data=[]store.KnowledgeBase}
+//	@Failure		401	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/knowledge-bases [get]
 func (h *handler) ListKBs(c *gin.Context) {
 	kbs, err := h.store.ListKBs(c.Request.Context())
 	if err != nil {
@@ -55,6 +78,18 @@ func (h *handler) ListKBs(c *gin.Context) {
 }
 
 // GetKB 知识库详情
+//
+//	@Summary		知识库详情
+//	@Description	按 ID 查询单个知识库
+//	@Tags			知识库
+//	@Produce		json
+//	@Param			id	path		string	true	"知识库 ID"
+//	@Success		200	{object}	Response{data=store.KnowledgeBase}
+//	@Failure		401	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/knowledge-bases/{id} [get]
 func (h *handler) GetKB(c *gin.Context) {
 	kb, err := h.store.GetKB(c.Request.Context(), c.Param("id"))
 	if err != nil {
@@ -69,6 +104,21 @@ func (h *handler) GetKB(c *gin.Context) {
 }
 
 // UpdateKB 更新知识库
+//
+//	@Summary		更新知识库
+//	@Description	更新知识库的名称与描述
+//	@Tags			知识库
+//	@Accept			json
+//	@Produce		json
+//	@Param			id		path		string			true	"知识库 ID"
+//	@Param			body	body		updateKBRequest	true	"更新内容"
+//	@Success		200		{object}	Response{data=store.KnowledgeBase}
+//	@Failure		400		{object}	Response
+//	@Failure		401		{object}	Response
+//	@Failure		404		{object}	Response
+//	@Failure		500		{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/knowledge-bases/{id} [put]
 func (h *handler) UpdateKB(c *gin.Context) {
 	var req updateKBRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -96,6 +146,18 @@ func (h *handler) UpdateKB(c *gin.Context) {
 }
 
 // DeleteKB 删除知识库（先清理其全部文档的向量与索引，再删记录）
+//
+//	@Summary		删除知识库
+//	@Description	删除知识库及其全部文档、向量与索引数据
+//	@Tags			知识库
+//	@Produce		json
+//	@Param			id	path		string	true	"知识库 ID"
+//	@Success		200	{object}	Response{data=object{id=string}}
+//	@Failure		401	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Failure		500	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/knowledge-bases/{id} [delete]
 func (h *handler) DeleteKB(c *gin.Context) {
 	ctx := c.Request.Context()
 	kbID := c.Param("id")

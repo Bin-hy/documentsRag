@@ -50,7 +50,7 @@ func (h *PostgresHistoryStore) Get(ctx context.Context, sessionID string, limit 
 	}
 	defer rows.Close()
 
-	var msgs []llm.Message
+	msgs := make([]llm.Message, 0)
 	for rows.Next() {
 		var m llm.Message
 		if err := rows.Scan(&m.Role, &m.Content); err != nil {
