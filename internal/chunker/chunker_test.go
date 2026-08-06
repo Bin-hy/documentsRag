@@ -33,10 +33,10 @@ func TestDefaultTokenizer(t *testing.T) {
 	}{
 		{"hello", 1},
 		{"hello world", 2},
-		{"你好", 4},           // 2 个中文字符 × 2
-		{"你好world", 5},     // 2×2 + 1
+		{"你好", 4},      // 2 个中文字符 × 2
+		{"你好world", 5}, // 2×2 + 1
 		{"", 0},
-		{"a,b", 3},          // a + , + b
+		{"a,b", 3}, // a + , + b
 	}
 
 	for _, tt := range tests {

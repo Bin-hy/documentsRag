@@ -76,8 +76,8 @@ type openaiLLM struct {
 // NewLLM 创建 LLM 客户端
 func NewLLM(cfg config.LLMConfig) LLM {
 	return &openaiLLM{
-		config: cfg,
-		client: &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second},
+		config:  cfg,
+		client:  &http.Client{Timeout: time.Duration(cfg.Timeout) * time.Second},
 		limiter: rate.NewLimiter(rate.Limit(cfg.QPS), cfg.QPS),
 	}
 }
