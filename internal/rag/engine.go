@@ -19,26 +19,30 @@ const noAnswerText = "未找到相关资料。"
 
 // RAGResult 回答结果
 type RAGResult struct {
-	Answer  string   `json:"answer"`
-	Sources []Source `json:"sources"`
+	Answer   string         `json:"answer"`
+	Sources  []Source       `json:"sources"`
+	Thinking []ThinkingStep `json:"thinking,omitempty"` // 思考链路（F8，关闭时省略）
 }
 
 // EventType 流式事件类型
+// 顺序即发送顺序：thinking×N → sources → chunk×N → done（或 error 终止）
 type EventType int
 
 const (
-	EventSources EventType = iota // 引用来源，先发
-	EventChunk                    // 文本增量
-	EventDone                     // 正常结束
-	EventError                    // 出错终止
+	EventThinking EventType = iota // 思考链路环节（每步完成立即发）
+	EventSources                   // 引用来源，先发
+	EventChunk                     // 文本增量
+	EventDone                      // 正常结束
+	EventError                     // 出错终止
 )
 
 // StreamEvent 流式 RAG 事件
 type StreamEvent struct {
-	Type    EventType
-	Content string   // EventChunk 时有效
-	Sources []Source // EventSources 时有效
-	Err     error    // EventError 时有效
+	Type     EventType
+	Content  string        // EventChunk 时有效
+	Sources  []Source      // EventSources 时有效
+	Thinking *ThinkingStep // EventThinking 时有效
+	Err      error         // EventError 时有效
 }
 
 // Engine RAG 编排接口
@@ -53,6 +57,8 @@ type AskOptions struct {
 	KBStrategy  *config.StrategyConfig // 知识库级策略（nil = 用全局）
 	ReqStrategy *config.StrategyConfig // 请求级策略（nil = 未覆盖）
 	CfgSnapshot *config.Config         // 请求级配置快照（nil = 用引擎构建时配置）
+	Thinking    bool                   // 本次请求是否请求思考链路（最终以 effective 三级合并为准，F9）
+	Sink        TraceSink              // 思考链路采集器（流式由 handler 注入；非流式 engine 自建 sliceSink）
 }
 
 // AskOption 函数式问答选项
@@ -74,6 +80,37 @@ func WithStrategy(kbStrategy, reqStrategy *config.StrategyConfig) AskOption {
 // WithConfigSnapshot 设置请求级配置快照（配置热重载时保证单次请求一致性）
 func WithConfigSnapshot(cfg *config.Config) AskOption {
 	return func(o *AskOptions) { o.CfgSnapshot = cfg }
+}
+
+// WithThinking 请求本次问答启用思考链路（最终开关 = 三级合并策略的 thinking=on 且此值为 true）
+func WithThinking(on bool) AskOption {
+	return func(o *AskOptions) { o.Thinking = on }
+}
+
+// WithSink 注入思考链路采集器（流式：转发到 SSE 通道；非流式：传 nil 由 engine 自建）
+func WithSink(sink TraceSink) AskOption {
+	return func(o *AskOptions) { o.Sink = sink }
+}
+
+// sinkFor 计算本次请求的思考链路采集器（N2：关闭时返回 nil，零开销）
+// 最终开关 = 三级合并策略 thinking=on 且请求要求（o.Thinking）
+func (e *RAGEngine) sinkFor(o *AskOptions, streamSink TraceSink) TraceSink {
+	eff := e.effective(*o)
+	if eff.Thinking != "on" || !o.Thinking {
+		return nil
+	}
+	if streamSink != nil {
+		return streamSink
+	}
+	return &sliceSink{}
+}
+
+// withThinking 非流式：把 sliceSink 收集的步骤附到 RAGResult.Thinking（F8）
+func withThinking(o *AskOptions, res *RAGResult) *RAGResult {
+	if ss, ok := o.Sink.(*sliceSink); ok && len(ss.steps) > 0 {
+		res.Thinking = ss.steps
+	}
+	return res
 }
 
 // RAGEngine 编排实现：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
@@ -104,7 +141,9 @@ func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
 	global := ragCfg.Strategy
 	if global.Query == "" && global.Fusion == "" && global.Decomposition == "" &&
 		global.StepBack == "" && global.HyDE == "" && global.Routing == "" {
-		// 旧开关兜底：从 *On() 推导
+		// 旧开关兜底：从 *On() 推导；thinking 单独保留（不参与兜底判断，
+		// 否则仅配置 thinking 会阻断旧开关映射其他策略）
+		thinking := global.Thinking
 		global = config.StrategyConfig{}
 		if ragCfg.MultiQueryOn() {
 			global.Query = "multi"
@@ -127,6 +166,7 @@ func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
 		if ragCfg.HyDEOn() {
 			global.HyDE = "on"
 		}
+		global.Thinking = thinking
 	}
 	var kb, req config.StrategyConfig
 	if o.KBStrategy != nil {
@@ -162,9 +202,12 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	for _, opt := range opts {
 		opt(&o)
 	}
+	// 思考链路：计算采集器（关闭时 nil），非流式由 engine 自建 sliceSink
+	sink := e.sinkFor(&o, o.Sink)
+	o.Sink = sink
 	eff := e.effective(o)
 	slog.Info("生效策略", "query", eff.Query, "fusion", eff.Fusion, "decomposition", eff.Decomposition,
-		"step_back", eff.StepBack, "hyde", eff.HyDE, "routing", eff.Routing)
+		"step_back", eff.StepBack, "hyde", eff.HyDE, "routing", eff.Routing, "thinking", eff.Thinking)
 
 	// RAG 路由：判定复杂度 → 按 strategy 分流
 	if eff.Routing == "auto" {
@@ -176,6 +219,12 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		} else {
 			strategy = route.Strategy
 			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+			// 思考链路：路由判定（F2，判定失败不 Record）
+			recordStep(sink, ThinkingStep{
+				Type:  StepRouting,
+				Label: "路由判定",
+				Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
+			})
 		}
 		// 按策略分流：decomposition → 分解；multi_query → 多查询；direct → 常规（含现有策略分支）
 		if strategy == "decomposition" {
@@ -200,7 +249,7 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		}
 	}
 
-	messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
+	messages, sources, err := e.prepare(ctx, sessionID, question, append(opts, WithSink(sink))...)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +258,7 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	if len(sources) == 0 {
 		e.appendHistory(sessionID, llm.RoleUser, question, "")
 		e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText, "")
-		return &RAGResult{Answer: noAnswerText}, nil
+		return withThinking(&o, &RAGResult{Answer: noAnswerText}), nil
 	}
 
 	start := time.Now()
@@ -222,7 +271,7 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	e.appendHistory(sessionID, llm.RoleUser, question, "")
 	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
 
-	return &RAGResult{Answer: answer, Sources: sources}, nil
+	return withThinking(&o, &RAGResult{Answer: answer, Sources: sources}), nil
 }
 
 // StreamAsk 流式问答：事件序列 EventSources → EventChunk×N → EventDone；出错发 EventError
@@ -234,41 +283,64 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 	for _, opt := range opts {
 		opt(&o)
 	}
-	var strategyRes *RAGResult
-	eff := e.effective(o)
-	// RAG 路由：判定复杂度 → 按 strategy 分流
-	if eff.Routing == "auto" {
-		route, ok, err := e.routeQuery(ctx, question)
-		strategy := ""
-		if err != nil || !ok {
-			strategy = e.ragCfgFor(o).RoutingFallback
-			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
-		} else {
-			strategy = route.Strategy
-			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
-		}
-		if strategy == "decomposition" {
-			if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
-				strategyRes = res
-			}
-		} else if strategy == "multi_query" {
-			if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
-				strategyRes = res
-			}
-		}
-	}
-	if strategyRes == nil && eff.Decomposition != "off" {
-		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
-			strategyRes = res
-		}
-	} else if strategyRes == nil && eff.StepBack == "on" {
-		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
-			strategyRes = res
-		}
-	}
 
 	go func() {
 		defer close(out)
+
+		// 思考链路：计算采集器。优先用外部注入（测试/特殊场景）；否则 engine 内部
+		// 转发到事件通道——thinking 事件与 sources/chunk 同通道同顺序，天然满足
+		// 「thinking 全在 sources 前」（prepare 先完成全部埋点再发 sources）。
+		var sink TraceSink
+		if o.Sink != nil {
+			sink = o.Sink
+		} else if o.Thinking && e.effective(o).Thinking == "on" {
+			sink = TraceSinkFunc(func(step ThinkingStep) {
+				sendEvent(ctx, out, StreamEvent{Type: EventThinking, Thinking: &step})
+			})
+		}
+		o.Sink = sink
+		eff := e.effective(o)
+		slog.Info("生效策略", "query", eff.Query, "fusion", eff.Fusion, "decomposition", eff.Decomposition,
+			"step_back", eff.StepBack, "hyde", eff.HyDE, "routing", eff.Routing, "thinking", eff.Thinking)
+
+		// 策略路径（含思考链路事件，均在 goroutine 内发送保证接收者就绪）
+		var strategyRes *RAGResult
+		// RAG 路由：判定复杂度 → 按 strategy 分流
+		if eff.Routing == "auto" {
+			route, ok, err := e.routeQuery(ctx, question)
+			strategy := ""
+			if err != nil || !ok {
+				strategy = e.ragCfgFor(o).RoutingFallback
+				slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
+			} else {
+				strategy = route.Strategy
+				slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+				// 思考链路：路由判定（F2，判定失败不 Record）
+				recordStep(sink, ThinkingStep{
+					Type:  StepRouting,
+					Label: "路由判定",
+					Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
+				})
+			}
+			if strategy == "decomposition" {
+				if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
+					strategyRes = res
+				}
+			} else if strategy == "multi_query" {
+				if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
+					strategyRes = res
+				}
+			}
+		}
+		if strategyRes == nil && eff.Decomposition != "off" {
+			if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
+				strategyRes = res
+			}
+		} else if strategyRes == nil && eff.StepBack == "on" {
+			if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
+				strategyRes = res
+			}
+		}
 
 		// 策略路径已生成完整回答：直接流式发出
 		if strategyRes != nil {
@@ -278,7 +350,7 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			return
 		}
 
-		messages, sources, err := e.prepare(ctx, sessionID, question, opts...)
+		messages, sources, err := e.prepare(ctx, sessionID, question, append(opts, WithSink(sink))...)
 		if err != nil {
 			sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
 			return
@@ -343,6 +415,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		opt(&o)
 	}
 	eff := e.effective(o)
+	sink := o.Sink // 思考链路采集器（由 Ask/StreamAsk 预先计算设置）
 	// 请求级配置快照（热重载一致性）：prepare 内 RAG 参数用快照
 	ragCfg := e.cfg
 	if o.CfgSnapshot != nil {
@@ -367,21 +440,40 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 				rewritten, rerr := e.rewriteQuery(ctx, history, question)
 				if rerr != nil {
 					slog.Warn("Query 改写失败，降级使用原问题", "err", rerr)
+					// 思考链路：改写失败降级（F3）
+					recordStep(sink, ThinkingStep{
+						Type:  StepRewrite,
+						Label: "查询改写",
+						Data:  RewriteData{Original: question, Rewritten: question, Fallback: true},
+					})
 				} else {
 					query = rewritten
 					slog.Info("Query 改写完成", "原问题", question, "改写后", query,
 						"耗时ms", time.Since(multiStart).Milliseconds())
+					// 思考链路：单查询改写（F3）
+					recordStep(sink, ThinkingStep{
+						Type:  StepRewrite,
+						Label: "查询改写",
+						Data:  RewriteData{Original: question, Rewritten: rewritten},
+					})
 				}
 			}
 		} else {
 			slog.Info("多查询生成完成", "变体数", len(queries), "变体", queries,
 				"耗时ms", time.Since(multiStart).Milliseconds())
+			// 思考链路：多查询变体（F3）
+			recordStep(sink, ThinkingStep{
+				Type:  StepMultiQuery,
+				Label: "多查询改写",
+				Data:  MultiQueryData{Variants: queries},
+			})
 			// 多路检索
 			retrieveStart := time.Now()
 			chunks, err := e.retriever.SearchMulti(ctx, retriever.RetrieveRequest{
 				Query:  query,
 				TopK:   ragCfg.TopK,
 				Filter: kbFilter(o.KBID),
+				Trace:  traceSinkForRequest(sink, query),
 			}, queries)
 			if err != nil {
 				return nil, nil, fmt.Errorf("多路检索失败: %w", err)
@@ -395,6 +487,12 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 				return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
 			}
 			slog.Info("上下文组装完成", "上下文token", estimateTokens(contextText), "引用数", len(sources))
+			// 思考链路：目标 chunks（F6）
+			recordStep(sink, ThinkingStep{
+				Type:  StepChunks,
+				Label: "目标片段",
+				Data:  chunksDataFrom(items, sources),
+			})
 
 			// 组装 messages：system + 历史 + user（上下文 + 原始问题）
 			messages := make([]llm.Message, 0, 2+len(history))
@@ -410,10 +508,22 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		rewritten, err := e.rewriteQuery(ctx, history, question)
 		if err != nil {
 			slog.Warn("Query 改写失败，降级使用原问题", "err", err)
+			// 思考链路：改写失败降级（F3）
+			recordStep(sink, ThinkingStep{
+				Type:  StepRewrite,
+				Label: "查询改写",
+				Data:  RewriteData{Original: question, Rewritten: question, Fallback: true},
+			})
 		} else {
 			query = rewritten
 			slog.Info("Query 改写完成", "原问题", question, "改写后", query,
 				"耗时ms", time.Since(rewriteStart).Milliseconds())
+			// 思考链路：单查询改写（F3）
+			recordStep(sink, ThinkingStep{
+				Type:  StepRewrite,
+				Label: "查询改写",
+				Data:  RewriteData{Original: question, Rewritten: rewritten},
+			})
 		}
 	}
 
@@ -427,6 +537,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			Query:  query,
 			TopK:   ragCfg.TopK,
 			Filter: kbFilter(o.KBID),
+			Trace:  traceSinkForRequest(sink, query),
 		})
 	}
 	if err != nil {
@@ -441,6 +552,12 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
 	}
 	slog.Info("上下文组装完成", "上下文token", estimateTokens(contextText), "引用数", len(sources))
+	// 思考链路：目标 chunks（F6）
+	recordStep(sink, ThinkingStep{
+		Type:  StepChunks,
+		Label: "目标片段",
+		Data:  chunksDataFrom(items, sources),
+	})
 
 	// 组装 messages：system + 历史 + user（上下文 + 原始问题）
 	messages := make([]llm.Message, 0, 2+len(history))

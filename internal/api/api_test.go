@@ -209,6 +209,7 @@ type fakeEngine struct {
 	mu           sync.Mutex
 	answer       string
 	sources      []rag.Source
+	thinking     []rag.ThinkingStep
 	streamChunks []string
 	streamErr    error // 非 nil 时 StreamAsk 发 error 事件替代 chunk/done
 	lastQuestion string
@@ -224,7 +225,7 @@ func (f *fakeEngine) Ask(ctx context.Context, sessionID string, question string,
 	if f.askErr != nil {
 		return nil, f.askErr
 	}
-	return &rag.RAGResult{Answer: f.answer, Sources: f.sources}, nil
+	return &rag.RAGResult{Answer: f.answer, Sources: f.sources, Thinking: f.thinking}, nil
 }
 
 func (f *fakeEngine) StreamAsk(ctx context.Context, sessionID string, question string, opts ...rag.AskOption) (<-chan rag.StreamEvent, error) {
@@ -233,7 +234,11 @@ func (f *fakeEngine) StreamAsk(ctx context.Context, sessionID string, question s
 	f.lastQuestion = question
 	f.lastAskOpts = opts
 
-	ch := make(chan rag.StreamEvent, len(f.streamChunks)+2)
+	ch := make(chan rag.StreamEvent, len(f.streamChunks)+len(f.thinking)+3)
+	for _, t := range f.thinking {
+		t := t
+		ch <- rag.StreamEvent{Type: rag.EventThinking, Thinking: &t}
+	}
 	ch <- rag.StreamEvent{Type: rag.EventSources, Sources: f.sources}
 	if f.streamErr != nil {
 		ch <- rag.StreamEvent{Type: rag.EventError, Err: f.streamErr}
@@ -1022,5 +1027,64 @@ func TestConfigPutInvalid(t *testing.T) {
 	w := doReq(t, env.router, "PUT", "/api/v1/config", body, boot)
 	if w.Code != 400 {
 		t.Fatalf("非法配置应 400: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// C9: 非流式 /api/v1/chat 响应 data.thinking 存在且结构完整
+func TestChatThinkingJSON(t *testing.T) {
+	env := newTestEnv(t)
+	env.engine.answer = "思考回答"
+	env.engine.sources = []rag.Source{{ID: "r1", Filename: "a.md", Score: 0.9}}
+	env.engine.thinking = []rag.ThinkingStep{
+		{Type: rag.StepRewrite, Label: "查询改写", Data: rag.RewriteData{Original: "问题", Rewritten: "改写后"}},
+		{Type: rag.StepChunks, Label: "目标片段", Data: rag.ChunksData{Chunks: []rag.ChunkInfo{{ID: "r1", Filename: "a.md", Content: "内容"}}}},
+	}
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]string{"session_id": "s1", "question": "问题"}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("问答状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	resp := decodeResp(t, w)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("响应数据错误: %+v", resp.Data)
+	}
+	thinking, ok := data["thinking"].([]any)
+	if !ok || len(thinking) != 2 {
+		t.Fatalf("thinking 字段缺失或错误: %+v", data["thinking"])
+	}
+	first, ok := thinking[0].(map[string]any)
+	if !ok || first["type"] != "query_rewrite" {
+		t.Errorf("thinking 首环节错误: %+v", thinking[0])
+	}
+}
+
+// SSE 流式：thinking 事件先于 sources 发出
+func TestChatSSEThinking(t *testing.T) {
+	env := newTestEnv(t)
+	env.engine.streamChunks = []string{"答案"}
+	env.engine.thinking = []rag.ThinkingStep{
+		{Type: rag.StepMultiQuery, Label: "多查询改写", Data: rag.MultiQueryData{Variants: []string{"v1"}}},
+	}
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat?stream=1",
+		map[string]string{"session_id": "s1", "question": "问题"}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("SSE 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "event:thinking") {
+		t.Errorf("缺少 thinking 事件:\n%s", body)
+	}
+	if !strings.Contains(body, "multi_query") {
+		t.Errorf("thinking 载荷缺失:\n%s", body)
+	}
+	srcIdx := strings.Index(body, "event:sources")
+	thinkIdx := strings.Index(body, "event:thinking")
+	if srcIdx >= 0 && thinkIdx >= 0 && thinkIdx > srcIdx {
+		t.Errorf("thinking 事件应在 sources 之前:\n%s", body)
 	}
 }

@@ -1,7 +1,7 @@
 // SSE 流式问答客户端
 // 使用 fetch + ReadableStream 手写解析（EventSource 无法携带 Authorization 头，
 // 也无法用 AbortController 主动停止）。
-import type { ChatRequest, ChatSource, SSEEvent } from './types'
+import type { ChatRequest, ChatSource, SSEEvent, ThinkingStep } from './types'
 import { getStoredApiKey } from './client'
 
 /**
@@ -77,6 +77,8 @@ export async function chatStream(
 // toEvent 把 gin SSE 的（事件名 + data JSON）映射为统一事件结构
 function toEvent(eventName: string, data: unknown): SSEEvent {
   switch (eventName) {
+    case 'thinking':
+      return { type: 'thinking', step: data as ThinkingStep }
     case 'sources':
       return { type: 'sources', sources: (data as ChatSource[]) ?? [] }
     case 'chunk': {

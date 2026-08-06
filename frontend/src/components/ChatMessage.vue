@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// 单条消息：用户右对齐 / 助手左对齐（Markdown + 来源 + 流式光标 + 错误态）
+// 单条消息：用户右对齐 / 助手左对齐（Markdown + 来源 + 流式光标 + 错误态 + 思考链路）
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import SourceCard from './SourceCard.vue'
+import ThinkingPanel from './ThinkingPanel.vue'
 import type { LocalMessage } from '../stores/chat'
 
 defineProps<{ message: LocalMessage; streaming: boolean }>()
@@ -13,6 +14,8 @@ defineProps<{ message: LocalMessage; streaming: boolean }>()
     <div class="msg-body">
       <div class="msg-bubble" :class="{ error: message.error }">
         <template v-if="message.role === 'assistant'">
+          <!-- 思考链路面板：流式中逐步累积，位于回答内容上方 -->
+          <ThinkingPanel v-if="message.thinking && message.thinking.length" :steps="message.thinking" />
           <MarkdownRenderer v-if="message.content" :content="message.content" />
           <span v-else-if="streaming" class="typing-cursor">▍</span>
           <span v-else class="br-muted">（无回答）</span>

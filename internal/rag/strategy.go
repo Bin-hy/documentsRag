@@ -14,6 +14,7 @@ type EffectiveStrategy struct {
 	StepBack      string // off / on
 	HyDE          string // off / on
 	Routing       string // off / auto
+	Thinking      string // off / on
 }
 
 // DefaultEffectiveStrategy 全局默认生效策略（与阶段一~三默认一致）
@@ -25,6 +26,7 @@ func DefaultEffectiveStrategy() EffectiveStrategy {
 		StepBack:      "off",
 		HyDE:          "off",
 		Routing:       "off",
+		Thinking:      "off",
 	}
 }
 
@@ -54,6 +56,7 @@ func ResolveStrategy(global, kb, req config.StrategyConfig) (EffectiveStrategy, 
 	eff.StepBack = pick(global.StepBack, kb.StepBack, req.StepBack, "off")
 	eff.HyDE = pick(global.HyDE, kb.HyDE, req.HyDE, "off")
 	eff.Routing = pick(global.Routing, kb.Routing, req.Routing, "off")
+	eff.Thinking = pick(global.Thinking, kb.Thinking, req.Thinking, "off")
 
 	if err := ValidateStrategy(eff); err != nil {
 		return eff, err
@@ -96,6 +99,11 @@ func ValidateStrategy(s EffectiveStrategy) error {
 	case "off", "auto":
 	default:
 		return fmt.Errorf("非法策略 routing=%q（应为 off/auto）", s.Routing)
+	}
+	switch s.Thinking {
+	case "off", "on":
+	default:
+		return fmt.Errorf("非法策略 thinking=%q（应为 off/on）", s.Thinking)
 	}
 	// routing=auto 已含分流，与 decomposition/step_back 冲突
 	if s.Routing == "auto" {

@@ -7,8 +7,8 @@ import (
 )
 
 func TestResolveStrategyPriority(t *testing.T) {
-	global := config.StrategyConfig{Query: "multi", Fusion: "rrf", Decomposition: "off", StepBack: "off", HyDE: "off", Routing: "off"}
-	kb := config.StrategyConfig{Query: "single", Fusion: "none"}
+	global := config.StrategyConfig{Query: "multi", Fusion: "rrf", Decomposition: "off", StepBack: "off", HyDE: "off", Routing: "off", Thinking: "off"}
+	kb := config.StrategyConfig{Query: "single", Fusion: "none", Thinking: "on"}
 	req := config.StrategyConfig{Query: "multi"}
 
 	eff, err := ResolveStrategy(global, kb, req)
@@ -27,6 +27,25 @@ func TestResolveStrategyPriority(t *testing.T) {
 	if eff.Decomposition != "off" || eff.Routing != "off" {
 		t.Errorf("全局应兜底：decomposition=%q routing=%q", eff.Decomposition, eff.Routing)
 	}
+	// kb 覆盖全局（req 未设置 thinking）
+	if eff.Thinking != "on" {
+		t.Errorf("kb 应覆盖全局：thinking=%q", eff.Thinking)
+	}
+}
+
+func TestResolveStrategyThinkingReqOverride(t *testing.T) {
+	// 请求级覆盖 kb：req.Thinking=off 应生效
+	eff, err := ResolveStrategy(
+		config.StrategyConfig{Thinking: "off"},
+		config.StrategyConfig{Thinking: "on"},
+		config.StrategyConfig{Thinking: "off"},
+	)
+	if err != nil {
+		t.Fatalf("ResolveStrategy 失败: %v", err)
+	}
+	if eff.Thinking != "off" {
+		t.Errorf("req 应覆盖 kb：thinking=%q", eff.Thinking)
+	}
 }
 
 func TestResolveStrategyDefaults(t *testing.T) {
@@ -36,7 +55,7 @@ func TestResolveStrategyDefaults(t *testing.T) {
 		t.Fatalf("ResolveStrategy 失败: %v", err)
 	}
 	if eff.Query != "multi" || eff.Fusion != "rrf" || eff.Decomposition != "off" ||
-		eff.StepBack != "off" || eff.HyDE != "off" || eff.Routing != "off" {
+		eff.StepBack != "off" || eff.HyDE != "off" || eff.Routing != "off" || eff.Thinking != "off" {
 		t.Errorf("默认值错误: %+v", eff)
 	}
 }
@@ -62,8 +81,8 @@ func TestValidateStrategyIllegal(t *testing.T) {
 
 func TestValidateStrategyValid(t *testing.T) {
 	valid := []EffectiveStrategy{
-		{Query: "single", Fusion: "none", Decomposition: "off", StepBack: "off", HyDE: "off", Routing: "off"},
-		{Query: "multi", Fusion: "rrf", Decomposition: "parallel", StepBack: "off", HyDE: "on", Routing: "off"},
+		{Query: "single", Fusion: "none", Decomposition: "off", StepBack: "off", HyDE: "off", Routing: "off", Thinking: "off"},
+		{Query: "multi", Fusion: "rrf", Decomposition: "parallel", StepBack: "off", HyDE: "on", Routing: "off", Thinking: "on"},
 	}
 	for _, s := range valid {
 		if err := ValidateStrategy(s); err != nil {

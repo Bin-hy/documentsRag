@@ -100,6 +100,19 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 		fusedResults = FuseRRF(vectorResults, bm25Results, allDocs, rrfCfg)
 	}
 
+	// 思考链路：检索方式与融合召回数（F4）；rerank 前后对比随后单独上报（F5）
+	if req.Trace != nil {
+		method := "vector"
+		if len(bm25Results) > 0 {
+			method = "hybrid"
+		}
+		req.Trace(RetrieveTrace{
+			Query:    req.Query,
+			Method:   method,
+			Recalled: len(fusedResults),
+		})
+	}
+
 	if len(fusedResults) > topK {
 		fusedResults = fusedResults[:topK]
 	}
@@ -126,6 +139,14 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 					Score:    rr.Score,
 					Metadata: rr.Metadata,
 				}
+			}
+			// 思考链路：rerank 前后排序对比（F5）
+			if req.Trace != nil {
+				req.Trace(RetrieveTrace{
+					Query:        req.Query,
+					RerankBefore: toRankedItems(fusedResults),
+					RerankAfter:  toRankedItems(results),
+				})
 			}
 			return results, nil
 		}
@@ -173,7 +194,34 @@ func (r *defaultRetriever) vectorSearchByVec(ctx context.Context, vector []float
 	return results, nil
 }
 
-// SearchByVector 按向量检索（HyDE 用）：无 BM25/重排，纯向量搜索
+// toRankedItems 将检索结果转为排序对比项（RankedItem）
+func toRankedItems(results []RetrieveResult) []RankedItem {
+	items := make([]RankedItem, len(results))
+	for i, r := range results {
+		items[i] = RankedItem{
+			ID:       r.ID,
+			Filename: metaStr(r.Metadata, "filename"),
+			Score:    r.Score,
+			Rank:     i + 1,
+		}
+	}
+	return items
+}
+
+// metaStr 从元数据安全提取字符串
+func metaStr(m map[string]any, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+// SearchByVector 按向量检索（HyDE 用）：无 BM25/重排，纯向量搜索。
+// 思考链路埋点在 rag.hydeSearch 层完成（见 routing.go），此处不上报。
 func (r *defaultRetriever) SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]RetrieveResult, error) {
 	if topK <= 0 {
 		topK = r.config.TopK
@@ -231,10 +279,13 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 
 	// 全部失败才返回错误；至少一路成功即可
 	valid := 0
-	for _, res := range results {
+	perQuery := make([]PerQueryTrace, len(queries))
+	for i, res := range results {
 		if len(res) > 0 {
 			valid++
 		}
+		// 思考链路：逐路数据（顺序与 queries 一致，N7）
+		perQuery[i] = PerQueryTrace{Query: queries[i], Recalled: len(res)}
 	}
 	if valid == 0 {
 		if firstErr != nil {
@@ -249,5 +300,15 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 	}
 	fused := FuseMultiQuery(results, 60, topK)
 	slog.Info("多路检索完成", "路数", len(queries), "有效路", valid, "融合数", len(fused))
+
+	// 思考链路：多路融合结果（F4/N7）
+	if req.Trace != nil {
+		req.Trace(RetrieveTrace{
+			Query:    req.Query,
+			Method:   "multi_fusion",
+			Recalled: len(fused),
+			PerQuery: perQuery,
+		})
+	}
 	return fused, nil
 }

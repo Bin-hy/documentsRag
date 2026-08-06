@@ -454,3 +454,113 @@ func TestFuseMultiQuery(t *testing.T) {
 		}
 	})
 }
+
+// 思考链路：Search 带 Trace 回调时收到检索方式/召回数与 rerank 前后对比
+func TestSearch_TraceCallback(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2, 0.3}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容1", "filename": "a.md"}},
+		{ID: "v2", Score: 0.8, Payload: map[string]any{"content": "内容2", "filename": "b.md"}},
+	}}
+	bm25 := NewBM25Index(NewSimpleTokenizer())
+	bm25.Add("v1", "测试 内容1 匹配", "")
+
+	cfg := config.RetrieverConfig{
+		TopK:           10,
+		RRFK:           60,
+		VectorWeight:   0.7,
+		BM25Weight:     0.3,
+		EnableBM25:     true,
+		EnableReranker: true,
+	}
+	ret := NewRetriever(cfg, emb, vs, bm25, &mockReranker{})
+
+	var traces []RetrieveTrace
+	_, err := ret.Search(context.Background(), RetrieveRequest{
+		Query: "测试",
+		Trace: func(t RetrieveTrace) { traces = append(traces, t) },
+	})
+	if err != nil {
+		t.Fatalf("Search 失败: %v", err)
+	}
+
+	if len(traces) != 2 {
+		t.Fatalf("期望 2 次回调（检索 + rerank），实际 %d", len(traces))
+	}
+	// 第一次：检索方式（BM25 非空 → hybrid）与召回数
+	if traces[0].Method != "hybrid" || traces[0].Recalled == 0 {
+		t.Errorf("检索回调错误: %+v", traces[0])
+	}
+	// 第二次：rerank 前后对比
+	if len(traces[1].RerankBefore) == 0 || len(traces[1].RerankAfter) == 0 {
+		t.Fatalf("rerank 回调缺少前后对比: %+v", traces[1])
+	}
+	if traces[1].RerankBefore[0].ID != "v1" || traces[1].RerankAfter[0].ID != "v1" {
+		t.Errorf("rerank 前后项错误: before=%+v after=%+v", traces[1].RerankBefore, traces[1].RerankAfter)
+	}
+	if traces[1].RerankBefore[0].Filename != "a.md" {
+		t.Errorf("rerank 项缺少来源文件名: %+v", traces[1].RerankBefore[0])
+	}
+}
+
+// 思考链路：Search 无 Trace 回调时不影响行为（nil 安全）
+func TestSearch_TraceNil(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容"}},
+	}}
+	cfg := config.RetrieverConfig{
+		TopK: 10, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3,
+		EnableBM25: false, EnableReranker: true,
+	}
+	ret := NewRetriever(cfg, emb, vs, nil, &mockReranker{})
+	results, err := ret.Search(context.Background(), RetrieveRequest{Query: "测试"})
+	if err != nil {
+		t.Fatalf("Search 失败: %v", err)
+	}
+	if len(results) != 1 {
+		t.Errorf("无 Trace 时结果应正常返回: %d", len(results))
+	}
+}
+
+// 思考链路：SearchMulti 回调含逐路数据，PerQuery 顺序与 queries 一致（N7/AC11）
+func TestSearchMulti_TracePerQueryOrder(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容"}},
+	}}
+	cfg := config.RetrieverConfig{
+		TopK: 10, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3,
+		EnableBM25: false, EnableReranker: false,
+	}
+	ret := NewRetriever(cfg, emb, vs, nil, nil)
+
+	var traces []RetrieveTrace
+	queries := []string{"原问题", "变体一", "变体二"}
+	_, err := ret.SearchMulti(context.Background(), RetrieveRequest{
+		Query: "原问题",
+		Trace: func(t RetrieveTrace) { traces = append(traces, t) },
+	}, queries)
+	if err != nil {
+		t.Fatalf("SearchMulti 失败: %v", err)
+	}
+
+	if len(traces) != 1 {
+		t.Fatalf("期望 1 次融合回调，实际 %d", len(traces))
+	}
+	tr := traces[0]
+	if tr.Method != "multi_fusion" {
+		t.Errorf("融合方法错误: %q", tr.Method)
+	}
+	if len(tr.PerQuery) != 3 {
+		t.Fatalf("PerQuery 数量错误: %d", len(tr.PerQuery))
+	}
+	for i, want := range queries {
+		if tr.PerQuery[i].Query != want {
+			t.Errorf("PerQuery[%d] 应为 %q，实际 %q", i, want, tr.PerQuery[i].Query)
+		}
+	}
+	if tr.Recalled == 0 {
+		t.Errorf("融合召回数应为正数")
+	}
+}

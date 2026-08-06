@@ -129,6 +129,7 @@ func (e *RAGEngine) searchSubQuery(ctx context.Context, query string, kbID strin
 // 返回 ok=false 表示判定为不适用（调用方落回常规路径）；err 非 nil 表示内部失败（调用方静默降级）。
 func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question string, o AskOptions) (*RAGResult, bool, error) {
 	start := time.Now()
+	sink := o.Sink // 思考链路采集器（由 Ask/StreamAsk 预先设置）
 	// 1. 判定
 	should, err := e.judgeDecompose(ctx, question)
 	if err != nil {
@@ -148,6 +149,12 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		return nil, false, err
 	}
 	slog.Info("分解为子问题", "数量", len(subs), "子问题", subs)
+	// 思考链路：分解判定 + 子问题（F7）
+	recordStep(sink, ThinkingStep{
+		Type:  StepDecompose,
+		Label: "问题分解",
+		Data:  DecomposeData{ShouldDecompose: true, SubQuestions: subs},
+	})
 
 	// 3. 逐子问题检索
 	mode := e.cfg.DecompositionMode
@@ -193,6 +200,15 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		wg.Wait()
 	}
 
+	// 思考链路：逐子问题检索（F7；主 goroutine 顺序 Record，N7 无竞争）
+	for i, s := range subs {
+		recordStep(sink, ThinkingStep{
+			Type:  StepRetrieval,
+			Label: "子问题检索",
+			Data:  RetrievalData{Query: s, Method: "sub_query", Recalled: len(subChunks[i])},
+		})
+	}
+
 	// 4. 汇总检索结果与来源
 	var allChunks []retriever.RetrieveResult
 	for _, chunks := range subChunks {
@@ -200,7 +216,7 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 	}
 	if len(allChunks) == 0 {
 		slog.Warn("分解后无任何检索结果，走兜底")
-		return &RAGResult{Answer: noAnswerText}, true, nil
+		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
 	}
 
 	items, sources := buildContext(allChunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
@@ -209,6 +225,12 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		return nil, false, fmt.Errorf("渲染上下文失败: %w", err)
 	}
 	slog.Info("分解综合", "上下文token", estimateTokens(contextText), "引用数", len(sources), "耗时ms", time.Since(start).Milliseconds())
+	// 思考链路：目标 chunks（F6）
+	recordStep(sink, ThinkingStep{
+		Type:  StepChunks,
+		Label: "目标片段",
+		Data:  chunksDataFrom(items, sources),
+	})
 
 	// 5. 综合生成
 	messages := []llm.Message{
@@ -222,12 +244,13 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 
 	e.appendHistory(sessionID, llm.RoleUser, question, "")
 	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
-	return &RAGResult{Answer: answer, Sources: sources}, true, nil
+	return withThinking(&o, &RAGResult{Answer: answer, Sources: sources}), true, nil
 }
 
 // tryStepBack 回退查询流程：判定需要 → 回退问题检索 + 原问题检索 → 合并上下文生成。
 func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question string, o AskOptions) (*RAGResult, bool, error) {
 	start := time.Now()
+	sink := o.Sink // 思考链路采集器（由 Ask/StreamAsk 预先设置）
 	// 1. 判定
 	sb, err := e.judgeStepBack(ctx, question)
 	if err != nil {
@@ -239,6 +262,12 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 		return nil, false, nil
 	}
 	slog.Info("回退判定：需要回退", "回退问题", sb.StepBackQuery, "耗时ms", time.Since(start).Milliseconds())
+	// 思考链路：回退问题（F7）
+	recordStep(sink, ThinkingStep{
+		Type:  StepStepBack,
+		Label: "回退查询",
+		Data:  StepBackData{StepBackQuery: sb.StepBackQuery},
+	})
 
 	// 2. 回退问题检索 + 原问题检索
 	backChunks, err := e.searchSubQuery(ctx, sb.StepBackQuery, o.KBID)
@@ -251,10 +280,21 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 		slog.Warn("原问题检索失败，降级常规路径", "err", err)
 		return nil, false, err
 	}
+	// 思考链路：回退/原问题两次检索（F7）
+	recordStep(sink, ThinkingStep{
+		Type:  StepRetrieval,
+		Label: "回退问题检索",
+		Data:  RetrievalData{Query: sb.StepBackQuery, Method: "sub_query", Recalled: len(backChunks)},
+	})
+	recordStep(sink, ThinkingStep{
+		Type:  StepRetrieval,
+		Label: "原问题检索",
+		Data:  RetrievalData{Query: question, Method: "sub_query", Recalled: len(origChunks)},
+	})
 
 	allChunks := append(backChunks, origChunks...)
 	if len(allChunks) == 0 {
-		return &RAGResult{Answer: noAnswerText}, true, nil
+		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
 	}
 
 	items, sources := buildContext(allChunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
@@ -263,6 +303,12 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 		return nil, false, fmt.Errorf("渲染上下文失败: %w", err)
 	}
 	slog.Info("回退综合", "上下文token", estimateTokens(contextText), "引用数", len(sources), "耗时ms", time.Since(start).Milliseconds())
+	// 思考链路：目标 chunks（F6）
+	recordStep(sink, ThinkingStep{
+		Type:  StepChunks,
+		Label: "目标片段",
+		Data:  chunksDataFrom(items, sources),
+	})
 
 	// 3. 生成
 	messages := []llm.Message{
@@ -276,5 +322,5 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 
 	e.appendHistory(sessionID, llm.RoleUser, question, "")
 	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
-	return &RAGResult{Answer: answer, Sources: sources}, true, nil
+	return withThinking(&o, &RAGResult{Answer: answer, Sources: sources}), true, nil
 }

@@ -97,6 +97,7 @@ type LLMConfig struct {
 //	StepBack: off / on
 //	HyDE: off / on
 //	Routing: off / auto
+//	Thinking: off / on
 //
 // 空字符串表示「未设置，继承低层级」（全局默认由 applyDefaults 兜底）
 type StrategyConfig struct {
@@ -106,6 +107,7 @@ type StrategyConfig struct {
 	StepBack      string `yaml:"step_back" json:"step_back,omitempty"`
 	HyDE          string `yaml:"hyde" json:"hyde,omitempty"`
 	Routing       string `yaml:"routing" json:"routing,omitempty"`
+	Thinking      string `yaml:"thinking" json:"thinking,omitempty"` // off / on，空=继承
 }
 
 // RAGConfig RAG 编排配置

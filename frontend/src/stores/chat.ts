@@ -1,15 +1,17 @@
 // 对话状态：会话索引（本地持久化）、消息、流式问答
 import { defineStore } from 'pinia'
 import { chatStream } from '../api/chat'
-import type { ChatSource, SessionMeta } from '../api/types'
+import type { ChatSource, SessionMeta, ThinkingStep } from '../api/types'
 
 const SESSIONS_STORAGE = 'binrag_sessions'
 
 // 本地消息：助手消息可携带引用来源与错误标记
+// thinking 不持久化（N4）：仅在当轮流式过程中累积，历史加载不含
 export interface LocalMessage {
   role: 'user' | 'assistant'
   content: string
   sources?: ChatSource[]
+  thinking?: ThinkingStep[]
   error?: boolean
 }
 
@@ -108,7 +110,7 @@ export const useChatStore = defineStore('chat', {
       const sessionId = this.activeSessionId || this.newSession().id
 
       this.messages.push({ role: 'user', content: question })
-      this.messages.push({ role: 'assistant', content: '', sources: [] })
+      this.messages.push({ role: 'assistant', content: '', sources: [], thinking: [] })
       this.streaming = true
       this.abortController = new AbortController()
 
@@ -132,6 +134,9 @@ export const useChatStore = defineStore('chat', {
           },
           (ev) => {
             switch (ev.type) {
+              case 'thinking':
+                this.messages[assistantIndex].thinking?.push(ev.step)
+                break
               case 'sources':
                 this.messages[assistantIndex].sources = ev.sources
                 break

@@ -1147,3 +1147,403 @@ func TestAsk_HyDEEmbedFail(t *testing.T) {
 		t.Errorf("降级回答错误: %q", res.Answer)
 	}
 }
+
+// ---- 思考链路（thinking）测试 ----
+
+// AC1/F8: 开启 thinking 后 Ask 返回完整思考链路，顺序符合执行顺序，目标 chunks 与 sources 同集合
+func TestAsk_ThinkingEnabled(t *testing.T) {
+	cfg := testRAGConfig()
+	// single 路径：genFunc 第 1 次为单查询改写，第 2 次为生成（避免 multiQuery 消耗调用）
+	cfg.Strategy = config.StrategyConfig{Thinking: "on", Query: "single", Fusion: "none"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, messages []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "rewritten-query", nil // 改写
+			}
+			return "思考链路回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			// 模拟 retriever 埋点（真 retriever 会回调 req.Trace）
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "hybrid", Recalled: 2})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if len(res.Thinking) == 0 {
+		t.Fatal("开启 thinking 后应返回思考链路")
+	}
+
+	// 顺序：改写 → 检索 → 目标片段
+	wantTypes := []ThinkingStepType{StepRewrite, StepRetrieval, StepChunks}
+	if len(res.Thinking) != len(wantTypes) {
+		t.Fatalf("思考步骤数错误: %d（%+v）", len(res.Thinking), stepTypes(res.Thinking))
+	}
+	for i, want := range wantTypes {
+		if res.Thinking[i].Type != want {
+			t.Errorf("第 %d 步类型错误: got %q want %q", i, res.Thinking[i].Type, want)
+		}
+	}
+
+	// 改写环节载荷
+	rd, ok := res.Thinking[0].Data.(RewriteData)
+	if !ok || rd.Original != "问题" || rd.Rewritten != "rewritten-query" || rd.Fallback {
+		t.Errorf("改写载荷错误: %+v", res.Thinking[0].Data)
+	}
+
+	// 检索环节载荷
+	gd, ok := res.Thinking[1].Data.(RetrievalData)
+	if !ok || gd.Query != "rewritten-query" || gd.Method != "hybrid" || gd.Recalled != 2 {
+		t.Errorf("检索载荷错误: %+v", res.Thinking[1].Data)
+	}
+
+	// 目标 chunks 与 sources 同集合（AC7）
+	cd, ok := res.Thinking[2].Data.(ChunksData)
+	if !ok || len(cd.Chunks) != len(res.Sources) {
+		t.Fatalf("目标 chunks 载荷错误: %+v", res.Thinking[2].Data)
+	}
+	srcIDs := map[string]bool{}
+	for _, s := range res.Sources {
+		srcIDs[s.ID] = true
+	}
+	for _, c := range cd.Chunks {
+		if !srcIDs[c.ID] {
+			t.Errorf("chunk %q 不在 sources 中", c.ID)
+		}
+	}
+}
+
+// F9/AC9: thinking=off（默认）时即使 WithThinking(true) 也不产生思考链路
+func TestAsk_ThinkingDisabled(t *testing.T) {
+	cfg := testRAGConfig() // Strategy 零值 → thinking 默认 off
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "普通回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if len(res.Thinking) != 0 {
+		t.Errorf("关闭 thinking 后不应返回思考链路: %+v", res.Thinking)
+	}
+}
+
+// AC1: 流式事件中 thinking 全部位于 sources 之前，且含各环节
+func TestStreamAsk_ThinkingEventsBeforeSources(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy = config.StrategyConfig{Thinking: "on"}
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "rw", nil // 改写
+		},
+		streamFunc: func(_ context.Context, _ []llm.Message) (<-chan llm.StreamChunk, error) {
+			ch := make(chan llm.StreamChunk, 2)
+			ch <- llm.StreamChunk{Content: "答案"}
+			ch <- llm.StreamChunk{Done: true}
+			close(ch)
+			return ch, nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "hybrid", Recalled: 2})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	events, err := engine.StreamAsk(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("StreamAsk 失败: %v", err)
+	}
+
+	var thinkingCount int
+	var firstSourcesIdx = -1
+	idx := 0
+	seenTypes := map[ThinkingStepType]bool{}
+	for ev := range events {
+		if ev.Type == EventThinking {
+			if ev.Thinking == nil {
+				t.Fatal("thinking 事件缺少 Thinking 数据")
+			}
+			thinkingCount++
+			seenTypes[ev.Thinking.Type] = true
+			if firstSourcesIdx >= 0 {
+				t.Fatalf("thinking 事件出现在 sources 之后（第 %d 个事件）", idx)
+			}
+		}
+		if ev.Type == EventSources && firstSourcesIdx < 0 {
+			firstSourcesIdx = idx
+		}
+		if ev.Type == EventError {
+			t.Fatalf("流式出错: %v", ev.Err)
+		}
+		idx++
+	}
+
+	if thinkingCount == 0 {
+		t.Fatal("开启 thinking 后流式应产生 thinking 事件")
+	}
+	if firstSourcesIdx < 0 {
+		t.Fatal("事件流中缺少 sources 事件")
+	}
+	// 各环节都在 sources 前发出
+	for _, want := range []ThinkingStepType{StepRewrite, StepRetrieval, StepChunks} {
+		if !seenTypes[want] {
+			t.Errorf("流式 thinking 缺少环节 %q（实际: %v）", want, seenTypes)
+		}
+	}
+}
+
+// stepTypes 提取步骤类型序列（断言辅助）
+func stepTypes(steps []ThinkingStep) []ThinkingStepType {
+	out := make([]ThinkingStepType, len(steps))
+	for i, s := range steps {
+		out[i] = s.Type
+	}
+	return out
+}
+
+// ---- 验收补测（checklist C2/C3/C4/C8）----
+
+// C3: 路由判定成功时 thinking 含复杂度/策略/推理
+func TestAsk_ThinkingRouting(t *testing.T) {
+	cfg := testRAGConfig()
+	// 纯策略化配置：routing=auto 走路由分流，thinking 开启
+	cfg.Strategy = config.StrategyConfig{Thinking: "on", Query: "single", Fusion: "none", Routing: "auto"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "simple", "strategy": "direct", "reasoning": "事实查询"}`, nil
+			case 2:
+				return "rewritten-q", nil
+			default:
+				return "回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "vector", Recalled: 2})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if len(res.Thinking) == 0 || res.Thinking[0].Type != StepRouting {
+		t.Fatalf("路由环节应为首个 thinking 步骤: %+v", stepTypes(res.Thinking))
+	}
+	rd, ok := res.Thinking[0].Data.(RoutingData)
+	if !ok || rd.Complexity != "simple" || rd.Strategy != "direct" || rd.Reasoning != "事实查询" {
+		t.Errorf("路由载荷错误: %+v", res.Thinking[0].Data)
+	}
+}
+
+// C4: multi_query 成功路径 thinking 含全部变体
+func TestAsk_ThinkingMultiQueryVariants(t *testing.T) {
+	cfg := testRAGConfig()
+	// 纯策略化配置：routing=auto（分流到 multi_query）
+	cfg.Strategy = config.StrategyConfig{Thinking: "on", Routing: "auto"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "medium", "strategy": "multi_query", "reasoning": "多角度"}`, nil
+			case 2:
+				return `["变体1","变体2"]`, nil
+			default:
+				return "多查询回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "multi_fusion", Recalled: 2,
+					PerQuery: []retriever.PerQueryTrace{{Query: "问题", Recalled: 2}, {Query: "变体1", Recalled: 2}, {Query: "变体2", Recalled: 2}}})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 找多查询环节
+	var found bool
+	for _, s := range res.Thinking {
+		if s.Type == StepMultiQuery {
+			found = true
+			md, ok := s.Data.(MultiQueryData)
+			if !ok || len(md.Variants) != 3 || md.Variants[0] != "问题" || md.Variants[1] != "变体1" || md.Variants[2] != "变体2" {
+				t.Errorf("多查询变体载荷错误: %+v", s.Data)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("缺少多查询环节: %+v", stepTypes(res.Thinking))
+	}
+}
+
+// C2: 流式与非流式思考链路内容一致（同 fake 输入）
+func TestThinking_StreamMatchesAsk(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy = config.StrategyConfig{Thinking: "on", Query: "single", Fusion: "none"}
+
+	mkLLM := func() *fakeLLM {
+		return &fakeLLM{
+			genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+				return "rewritten-q", nil
+			},
+			streamFunc: func(_ context.Context, _ []llm.Message) (<-chan llm.StreamChunk, error) {
+				ch := make(chan llm.StreamChunk, 2)
+				ch <- llm.StreamChunk{Content: "答案"}
+				ch <- llm.StreamChunk{Done: true}
+				close(ch)
+				return ch, nil
+			},
+		}
+	}
+	mkRet := func() *fakeRetriever {
+		return &fakeRetriever{
+			searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+				if req.Trace != nil {
+					req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "vector", Recalled: 2})
+				}
+				return testResults(), nil
+			},
+		}
+	}
+
+	// 非流式
+	fl1, ft1 := mkLLM(), mkRet()
+	hs1 := NewMemoryHistoryStore(50)
+	res, err := NewEngine(cfg, fl1, ft1, hs1, nil).Ask(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 流式
+	fl2, ft2 := mkLLM(), mkRet()
+	hs2 := NewMemoryHistoryStore(50)
+	events, err := NewEngine(cfg, fl2, ft2, hs2, nil).StreamAsk(context.Background(), "s1", "问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("StreamAsk 失败: %v", err)
+	}
+	var streamSteps []ThinkingStep
+	for ev := range events {
+		if ev.Type == EventThinking {
+			streamSteps = append(streamSteps, *ev.Thinking)
+		}
+	}
+
+	if len(res.Thinking) != len(streamSteps) {
+		t.Fatalf("流式/非流式步骤数不一致: ask=%d stream=%d", len(res.Thinking), len(streamSteps))
+	}
+	for i := range res.Thinking {
+		if res.Thinking[i].Type != streamSteps[i].Type {
+			t.Errorf("第 %d 步类型不一致: ask=%q stream=%q", i, res.Thinking[i].Type, streamSteps[i].Type)
+		}
+	}
+}
+
+// C8: Decomposition 路径 thinking 含分解判定、子问题与逐子问题检索
+func TestAsk_ThinkingDecompose(t *testing.T) {
+	cfg := testRAGConfig()
+	// 纯策略化配置：decomposition=parallel
+	cfg.Strategy = config.StrategyConfig{Thinking: "on", Decomposition: "parallel"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"decompose": true}`, nil
+			case 2:
+				return `["子问题1","子问题2"]`, nil
+			default:
+				return "分解综合回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "复杂问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	var sawDecompose, sawSubRetrieval bool
+	for _, s := range res.Thinking {
+		switch s.Type {
+		case StepDecompose:
+			sawDecompose = true
+			dd, ok := s.Data.(DecomposeData)
+			if !ok || !dd.ShouldDecompose || len(dd.SubQuestions) != 2 {
+				t.Errorf("分解载荷错误: %+v", s.Data)
+			}
+		case StepRetrieval:
+			if rd, ok := s.Data.(RetrievalData); ok && rd.Method == "sub_query" {
+				sawSubRetrieval = true
+			}
+		}
+	}
+	if !sawDecompose {
+		t.Errorf("缺少分解环节: %+v", stepTypes(res.Thinking))
+	}
+	if !sawSubRetrieval {
+		t.Errorf("缺少子问题检索环节: %+v", stepTypes(res.Thinking))
+	}
+}

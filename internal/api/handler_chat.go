@@ -21,7 +21,7 @@ type chatRequest struct {
 // Chat 普通问答（返回回答与引用来源）
 //
 //	@Summary		问答
-//	@Description	接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止）
+//	@Description	接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）
 //	@Tags			问答
 //	@Accept			json
 //	@Produce		json
@@ -51,7 +51,7 @@ func (h *handler) Chat(c *gin.Context) {
 	}
 	result, err := eng.Ask(c.Request.Context(), req.SessionID, req.Question,
 		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
-		rag.WithConfigSnapshot(snap))
+		rag.WithConfigSnapshot(snap), rag.WithThinking(true))
 	if err != nil {
 		Fail(c, CodeInternal, "问答失败: "+err.Error())
 		return
@@ -86,9 +86,10 @@ func (h *handler) ChatStream(c *gin.Context) {
 		return
 	}
 
+	// 思考链路：thinking 事件由 engine 内部转发到事件流（开启时），此处只做分发（G2）
 	events, err := h.engine().StreamAsk(c.Request.Context(), req.SessionID, req.Question,
 		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
-		rag.WithConfigSnapshot(h.cfgSnapshot()))
+		rag.WithConfigSnapshot(h.cfgSnapshot()), rag.WithThinking(true))
 	if err != nil {
 		Fail(c, CodeInternal, "启动流式问答失败: "+err.Error())
 		return
@@ -100,6 +101,8 @@ func (h *handler) ChatStream(c *gin.Context) {
 
 	for ev := range events {
 		switch ev.Type {
+		case rag.EventThinking:
+			c.SSEvent("thinking", ev.Thinking)
 		case rag.EventSources:
 			c.SSEvent("sources", ev.Sources)
 		case rag.EventChunk:

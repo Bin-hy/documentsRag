@@ -16,6 +16,7 @@ export interface StrategyConfig {
   step_back?: 'off' | 'on'
   hyde?: 'off' | 'on'
   routing?: 'off' | 'auto'
+  thinking?: 'off' | 'on' // 思考链路开关
 }
 
 // 知识库
@@ -79,6 +80,84 @@ export interface UploadResult {
 }
 
 // 对话
+// ---- 思考链路（thinking）----
+// 环节类型与后端 ThinkingStepType 对齐
+// 各环节 Data 载荷（与后端 json tag 对齐）
+
+export interface RoutingData {
+  complexity: 'simple' | 'medium' | 'complex'
+  strategy: string
+  reasoning?: string
+}
+
+export interface RewriteData {
+  original: string
+  rewritten: string
+  fallback?: boolean
+}
+
+export interface MultiQueryData {
+  variants: string[]
+}
+
+export interface PerQueryRet {
+  query: string
+  method?: string
+  recalled: number
+}
+
+export interface RetrievalData {
+  query: string
+  per_query?: PerQueryRet[]
+  method?: string
+  recalled: number
+}
+
+export interface RankedItem {
+  id: string
+  filename: string
+  score: number
+  rank: number
+}
+
+export interface RerankData {
+  query: string
+  before: RankedItem[]
+  after: RankedItem[]
+}
+
+export interface ChunkInfo {
+  id: string
+  filename: string
+  heading: string
+  score: number
+  content: string
+}
+
+export interface ChunksData {
+  chunks: ChunkInfo[]
+}
+
+export interface DecomposeData {
+  should_decompose: boolean
+  sub_questions?: string[]
+}
+
+export interface StepBackData {
+  step_back_query: string
+}
+
+export interface HyDEData {
+  hypo_doc: string
+}
+
+export interface ThinkingStep {
+  type: string
+  label: string
+  elapsed_ms?: number
+  data?: any
+}
+
 export interface ChatSource {
   id: string
   filename: string
@@ -98,8 +177,9 @@ export interface ChatRequest {
   strategy?: StrategyConfig // 单次请求策略覆盖
 }
 
-// SSE 事件（后端序列：sources → chunk×N → done，或 error）
+// SSE 事件（后端序列：thinking×N → sources → chunk×N → done，或 error）
 export type SSEEvent =
+  | { type: 'thinking'; step: ThinkingStep }
   | { type: 'sources'; sources: ChatSource[] }
   | { type: 'chunk'; content: string }
   | { type: 'done' }
