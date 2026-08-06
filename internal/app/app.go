@@ -105,7 +105,7 @@ func New(cfg *config.Config) (*App, error) {
 	llmClient := llm.NewLLM(cfg.LLM)
 	rr := reranker.NewReranker(cfg.Reranker)
 	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
-	engine := rag.NewEngine(cfg.RAG, llmClient, rt, &ragHistoryAdapter{inner: st.HistoryStore()})
+	engine := rag.NewEngine(cfg.RAG, llmClient, rt, &ragHistoryAdapter{inner: st.HistoryStore()}, emb)
 
 	// HTTP 路由（API + 前端静态托管）
 	router := api.NewRouter(api.Dependencies{
@@ -235,7 +235,7 @@ func AssembleEvalDeps(cfg *config.Config) (*EvalDeps, error) {
 	llmClient := llm.NewLLM(cfg.LLM)
 	rr := reranker.NewReranker(cfg.Reranker)
 	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
-	engine := rag.NewEngine(cfg.RAG, llmClient, rt, rag.NewMemoryHistoryStore(cfg.RAG.HistoryCapacity))
+	engine := rag.NewEngine(cfg.RAG, llmClient, rt, rag.NewMemoryHistoryStore(cfg.RAG.HistoryCapacity), emb)
 
 	closer := func() error {
 		return vs.Close()

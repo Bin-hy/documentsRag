@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
+	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/retriever"
 )
@@ -66,16 +67,18 @@ type RAGEngine struct {
 	retriever retriever.Retriever
 	history   HistoryStore
 	templates promptTemplates
+	embedder  embedding.Embedder // HyDE 用（nil 时 HyDE 禁用）
 }
 
 // NewEngine 创建 RAG 编排器
-func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs HistoryStore) Engine {
+func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs HistoryStore, emb embedding.Embedder) Engine {
 	return &RAGEngine{
 		cfg:       cfg,
 		llm:       l,
 		retriever: rt,
 		history:   hs,
 		templates: loadPromptTemplates(cfg),
+		embedder:  emb,
 	}
 }
 
@@ -86,6 +89,31 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	for _, opt := range opts {
 		opt(&o)
 	}
+
+	// RAG 路由：判定复杂度 → 按 strategy 分流
+	if e.cfg.RoutingOn() {
+		route, ok, err := e.routeQuery(ctx, question)
+		strategy := ""
+		if err != nil || !ok {
+			strategy = e.cfg.RoutingFallback
+			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
+		} else {
+			strategy = route.Strategy
+			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+		}
+		// 按策略分流：decomposition → 分解；multi_query → 多查询；direct → 常规（含现有策略分支）
+		if strategy == "decomposition" {
+			if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
+				return res, nil
+			}
+		} else if strategy == "multi_query" {
+			if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
+				return res, nil
+			}
+		}
+		// direct 或策略失败 → 落常规
+	}
+
 	if e.cfg.DecompositionOn() {
 		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
 			return res, nil
@@ -131,11 +159,32 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 		opt(&o)
 	}
 	var strategyRes *RAGResult
-	if e.cfg.DecompositionOn() {
+	// RAG 路由：判定复杂度 → 按 strategy 分流
+	if e.cfg.RoutingOn() {
+		route, ok, err := e.routeQuery(ctx, question)
+		strategy := ""
+		if err != nil || !ok {
+			strategy = e.cfg.RoutingFallback
+			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
+		} else {
+			strategy = route.Strategy
+			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+		}
+		if strategy == "decomposition" {
+			if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
+				strategyRes = res
+			}
+		} else if strategy == "multi_query" {
+			if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
+				strategyRes = res
+			}
+		}
+	}
+	if strategyRes == nil && e.cfg.DecompositionOn() {
 		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
 			strategyRes = res
 		}
-	} else if e.cfg.StepBackOn() {
+	} else if strategyRes == nil && e.cfg.StepBackOn() {
 		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
 			strategyRes = res
 		}
@@ -285,13 +334,18 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		}
 	}
 
-	// 检索（携带知识库范围）
+	// 检索（携带知识库范围）；HyDE 启用且非多查询路径时用 hydeSearch 增强
 	retrieveStart := time.Now()
-	chunks, err := e.retriever.Search(ctx, retriever.RetrieveRequest{
-		Query:  query,
-		TopK:   e.cfg.TopK,
-		Filter: kbFilter(o.KBID),
-	})
+	var chunks []retriever.RetrieveResult
+	if e.cfg.HyDEOn() && e.embedder != nil && !e.cfg.MultiQueryOn() {
+		chunks, err = e.hydeSearch(ctx, query, o)
+	} else {
+		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{
+			Query:  query,
+			TopK:   e.cfg.TopK,
+			Filter: kbFilter(o.KBID),
+		})
+	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("检索失败: %w", err)
 	}

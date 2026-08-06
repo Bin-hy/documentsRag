@@ -62,6 +62,24 @@ const defaultStepBackJudgeTemplate = `判断以下问题是否适合「先退一
 只输出 JSON：{"step_back": true 或 false, "question": "回退问题（step_back 为 true 时）"}，不要其他内容。
 用户问题：{{.Question}}`
 
+// defaultRoutingTemplate 路由复杂度判定模板：输出 JSON
+const defaultRoutingTemplate = `分析以下查询的复杂度，并选择合适的检索策略。
+复杂度：
+- simple：简单事实查询、单一明确问题、定义类问题
+- medium：需要多角度召回、同义改写有帮助的问题
+- complex：复合型问题（多信息需求）、需要对比分析、多步骤解答、复杂抽象问题
+策略：
+- direct：直接检索（simple 用）
+- multi_query：多查询多路召回（medium 用）
+- decomposition：问题分解后逐子问题检索综合（complex 用）
+只输出 JSON：{"complexity": "simple|medium|complex", "strategy": "direct|multi_query|decomposition", "reasoning": "简短理由"}，不要其他内容。
+用户问题：{{.Question}}`
+
+// defaultHyDETemplate 假设文档生成模板
+const defaultHyDETemplate = `请根据以下问题，写一段详细的假设性文档作为检索查询。即使不确定，也要写得像真实文档一样具体、详细，包含关键术语与可能的相关信息。这段假设文档将用于向量检索真实文档。
+问题：{{.Question}}
+假设性文档：`
+
 // promptTemplates 一组已加载的模板
 type promptTemplates struct {
 	system         string // 系统提示词（纯文本，不渲染）
@@ -71,6 +89,8 @@ type promptTemplates struct {
 	decomposeJudge string // 分解判定模板
 	decomposeList  string // 子问题生成模板
 	stepBackJudge  string // 回退判定模板
+	routing        string // 路由复杂度判定模板
+	hyde           string // 假设文档生成模板
 }
 
 // loadPromptTemplates 从配置路径加载模板，读取失败或未配置时使用内置默认
@@ -83,6 +103,8 @@ func loadPromptTemplates(cfg config.RAGConfig) promptTemplates {
 		decomposeJudge: loadOrDefault(cfg.DecompositionTemplatePath, defaultDecomposeJudgeTemplate),
 		decomposeList:  defaultDecomposeListTemplate, // 子问题生成模板暂不开放配置（与判定共用一个路径会产生歧义）
 		stepBackJudge:  loadOrDefault(cfg.StepBackTemplatePath, defaultStepBackJudgeTemplate),
+		routing:        loadOrDefault(cfg.RoutingTemplatePath, defaultRoutingTemplate),
+		hyde:           loadOrDefault(cfg.HyDETemplatePath, defaultHyDETemplate),
 	}
 }
 
@@ -162,6 +184,26 @@ type stepBackJudgeData struct {
 // renderStepBackJudge 渲染回退判定提示
 func renderStepBackJudge(question string, tpl string) (string, error) {
 	return renderTemplate(tpl, stepBackJudgeData{Question: question})
+}
+
+// routeData 路由判定模板数据
+type routeData struct {
+	Question string
+}
+
+// renderRouting 渲染路由复杂度判定提示
+func renderRouting(question string, tpl string) (string, error) {
+	return renderTemplate(tpl, routeData{Question: question})
+}
+
+// hydeData 假设文档生成模板数据
+type hydeData struct {
+	Question string
+}
+
+// renderHyDE 渲染假设文档生成提示
+func renderHyDE(question string, tpl string) (string, error) {
+	return renderTemplate(tpl, hydeData{Question: question})
 }
 
 // renderRewrite 渲染 Query 改写提示

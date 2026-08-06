@@ -123,6 +123,14 @@ rag:
   decomposition_max_sub: 5
   # 是否启用 Step-Back 回退查询（false/不配置 = 关闭；true = 判定需要时先回退检索再精答）
   step_back_enabled: false
+  # 是否启用 RAG 路由（false/不配置 = 关闭；true = LLM 判定复杂度自动分流 simple/medium/complex）
+  routing_enabled: false
+  # 路由判定失败时的回退策略（direct / multi_query / decomposition，默认 multi_query）
+  routing_fallback: multi_query
+  # 是否启用 HyDE 假设文档（false/不配置 = 关闭；true = 生成假设文档向量检索，需 Embedding 配额）
+  hyde_enabled: false
+  # 简单查询是否跳过 HyDE（true/不配置 = 跳过，节省成本）
+  hyde_skip_simple: true
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数

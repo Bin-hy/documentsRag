@@ -104,6 +104,12 @@ type RAGConfig struct {
 	StepBackEnabled           *bool  `yaml:"step_back_enabled"`
 	DecompositionTemplatePath string `yaml:"decomposition_template_path"`
 	StepBackTemplatePath      string `yaml:"step_back_template_path"`
+	RoutingEnabled            *bool  `yaml:"routing_enabled"`
+	RoutingFallback           string `yaml:"routing_fallback"`
+	HyDEEnabled               *bool  `yaml:"hyde_enabled"`
+	HyDESkipSimple            *bool  `yaml:"hyde_skip_simple"`
+	RoutingTemplatePath       string `yaml:"routing_template_path"`
+	HyDETemplatePath          string `yaml:"hyde_template_path"`
 	HistoryCapacity           int    `yaml:"history_capacity"`
 	HistoryLimit              int    `yaml:"history_limit"`
 	SystemPromptPath          string `yaml:"system_prompt_path"`
@@ -129,6 +135,21 @@ func (c RAGConfig) DecompositionOn() bool {
 // StepBackOn 是否启用回退查询（nil 视为关闭）
 func (c RAGConfig) StepBackOn() bool {
 	return c.StepBackEnabled != nil && *c.StepBackEnabled
+}
+
+// RoutingOn 是否启用 RAG 路由（nil 视为关闭）
+func (c RAGConfig) RoutingOn() bool {
+	return c.RoutingEnabled != nil && *c.RoutingEnabled
+}
+
+// HyDEOn 是否启用 HyDE 假设文档（nil 视为关闭）
+func (c RAGConfig) HyDEOn() bool {
+	return c.HyDEEnabled != nil && *c.HyDEEnabled
+}
+
+// HyDESkipSimpleOn 简单查询是否跳过 HyDE（nil 视为 true）
+func (c RAGConfig) HyDESkipSimpleOn() bool {
+	return c.HyDESkipSimple == nil || *c.HyDESkipSimple
 }
 
 // PostgresConfig 元数据存储配置
@@ -274,6 +295,10 @@ func (c *Config) applyDefaults() {
 	}
 	if c.RAG.DecompositionMaxSub <= 0 {
 		c.RAG.DecompositionMaxSub = 5
+	}
+	// Routing / HyDE 默认值
+	if c.RAG.RoutingFallback == "" {
+		c.RAG.RoutingFallback = "multi_query"
 	}
 	// Loader 默认值
 	if c.Loader.MinReadableChars == 0 {

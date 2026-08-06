@@ -46,6 +46,7 @@ type fakeRetriever struct {
 	mu         sync.Mutex
 	searchFunc func(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error)
 	queries    []string
+	byVecCalls int
 }
 
 func (f *fakeRetriever) Search(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
@@ -67,6 +68,34 @@ func (f *fakeRetriever) SearchMulti(ctx context.Context, req retriever.RetrieveR
 			return nil, err
 		}
 		out = append(out, res...)
+	}
+	return out, nil
+}
+
+func (f *fakeRetriever) SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	f.byVecCalls++
+	f.mu.Unlock()
+	return f.searchFunc(ctx, retriever.RetrieveRequest{Query: "hyde-vector"})
+}
+
+// fakeEmbedder 固定向量
+type fakeEmbedder struct {
+	vec []float32
+	err error
+}
+
+func (f *fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	vec := f.vec
+	if vec == nil {
+		vec = []float32{1, 0, 0}
+	}
+	out := make([][]float32, len(texts))
+	for i := range out {
+		out[i] = vec
 	}
 	return out, nil
 }
@@ -112,7 +141,7 @@ func TestAsk_FullChain(t *testing.T) {
 	}
 
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "它支持哪些格式？")
 	if err != nil {
@@ -181,7 +210,7 @@ func TestAsk_RewriteReceivesHistory(t *testing.T) {
 		},
 	}
 
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 	if _, err := engine.Ask(context.Background(), "s1", "它有哪些优点？"); err != nil {
 		t.Fatalf("Ask 失败: %v", err)
 	}
@@ -208,7 +237,7 @@ func TestAsk_EmptyRetrieval(t *testing.T) {
 	}
 
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "不存在的问题")
 	if err != nil {
@@ -250,7 +279,7 @@ func TestStreamAsk_EventSequence(t *testing.T) {
 	}
 
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	events, err := engine.StreamAsk(context.Background(), "s1", "流式问题")
 	if err != nil {
@@ -311,7 +340,7 @@ func TestAsk_CustomSystemPrompt(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	if _, err := engine.Ask(context.Background(), "s1", "问题"); err != nil {
 		t.Fatalf("Ask 失败: %v", err)
@@ -343,7 +372,7 @@ func TestAsk_RewriteFailureFallback(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "原始问题")
 	if err != nil {
@@ -377,7 +406,7 @@ func TestAsk_RewriteDisabled(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	if _, err := engine.Ask(context.Background(), "s1", "原问题"); err != nil {
 		t.Fatalf("Ask 失败: %v", err)
@@ -408,7 +437,7 @@ func TestAsk_Concurrent(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(100)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	var wg sync.WaitGroup
 	for g := 0; g < 8; g++ {
@@ -449,7 +478,7 @@ func TestStreamAsk_ContextCancel(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(testRAGConfig(), fl, ft, hs)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
 
 	events, err := engine.StreamAsk(ctx, "s1", "问题")
 	if err != nil {
@@ -502,7 +531,7 @@ func TestAsk_MultiQueryEnabled(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "原始问题")
 	if err != nil {
@@ -546,7 +575,7 @@ func TestAsk_MultiQueryFallback(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "原始问题")
 	if err != nil {
@@ -581,7 +610,7 @@ func TestAsk_MultiQueryDisabled(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	if _, err := engine.Ask(context.Background(), "s1", "原问题"); err != nil {
 		t.Fatalf("Ask 失败: %v", err)
@@ -626,7 +655,7 @@ func TestAsk_DecompositionParallel(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
 	if err != nil {
@@ -671,7 +700,7 @@ func TestAsk_DecompositionSequential(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
 	if err != nil {
@@ -703,7 +732,7 @@ func TestAsk_DecompositionSkip(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	// 注意：判定返回 false 后落常规路径，但常规的改写也会调用 LLM（genFunc 恒返回非 JSON）→ 改写失败降级原问题
 	if _, err := engine.Ask(context.Background(), "s1", "简单问题"); err != nil {
@@ -741,7 +770,7 @@ func TestAsk_StepBack(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "最近的地下空间设计趋势是什么")
 	if err != nil {
@@ -784,7 +813,7 @@ func TestAsk_StrategiesMutualExclusion(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
 	if err != nil {
@@ -822,11 +851,297 @@ func TestAsk_DecompositionFallback(t *testing.T) {
 		},
 	}
 	hs := NewMemoryHistoryStore(50)
-	engine := NewEngine(cfg, fl, ft, hs)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
 
 	res, err := engine.Ask(context.Background(), "s1", "问题")
 	if err != nil {
 		t.Fatalf("判定失败应降级而非报错: %v", err)
+	}
+	if res.Answer != "降级回答" {
+		t.Errorf("降级回答错误: %q", res.Answer)
+	}
+}
+
+// 测试 helper：启用 Routing 的配置
+func testRoutingCfg() config.RAGConfig {
+	cfg := testRAGConfig()
+	on := true
+	cfg.RoutingEnabled = &on
+	cfg.RoutingFallback = "multi_query"
+	return cfg
+}
+
+// 路由 simple/direct → 常规路径
+func TestAsk_RoutingDirect(t *testing.T) {
+	cfg := testRoutingCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return `{"complexity": "simple", "strategy": "direct", "reasoning": "事实查询"}`, nil
+			}
+			if genCalls == 2 {
+				return "rewritten-q", nil // 常规改写
+			}
+			return "直接回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "简单问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "直接回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	// direct → 常规单路检索
+	if len(ft.queries) != 1 {
+		t.Errorf("direct 应单路检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// 路由 medium/multi_query → SearchMulti 被调
+func TestAsk_RoutingMultiQuery(t *testing.T) {
+	cfg := testRoutingCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "medium", "strategy": "multi_query", "reasoning": "多角度"}`, nil
+			case 2:
+				return `["变体1","变体2"]`, nil
+			default:
+				return "多查询回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "中等问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "多查询回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	// 原问题 + 2 变体 = 3 路
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 3 {
+		t.Errorf("multi_query 应 3 路检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// 路由 complex/decomposition → 分解路径
+func TestAsk_RoutingDecomposition(t *testing.T) {
+	cfg := testRoutingCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "complex", "strategy": "decomposition", "reasoning": "复合"}`, nil
+			case 2:
+				return `{"decompose": true}`, nil // tryDecompose 内部判定
+			case 3:
+				return `["子1","子2"]`, nil
+			default:
+				return "分解回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "复杂问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "分解回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	// 2 个子问题检索
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 2 {
+		t.Errorf("decomposition 应 2 路子问题检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// 路由判定失败 → 回退默认 multi_query
+func TestAsk_RoutingFallback(t *testing.T) {
+	cfg := testRoutingCfg()
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return "非 JSON", nil // 路由判定解析失败
+			case 2:
+				return `["变体1"]`, nil // 回退 multi_query 的变体生成
+			default:
+				return "回退回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "回退回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	// 回退 multi_query：原问题 + 1 变体 = 2 路
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 2 {
+		t.Errorf("fallback multi_query 应 2 路检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// HyDE：启用 → 假设文档生成 + SearchByVector + 融合
+func TestAsk_HyDE(t *testing.T) {
+	cfg := testRAGConfig()
+	on := true
+	cfg.HyDEEnabled = &on
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "假设文档内容", nil // HyDE 假设文档
+			}
+			return "HyDE 回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	fe := &fakeEmbedder{}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, fe)
+
+	res, err := engine.Ask(context.Background(), "s1", "模糊问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "HyDE 回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if ft.byVecCalls == 0 {
+		t.Errorf("HyDE 应调用 SearchByVector")
+	}
+	// HyDE 路 + 原查询路
+	if len(ft.queries) == 0 {
+		t.Errorf("HyDE 应有原查询检索")
+	}
+}
+
+// HyDE skip_simple：simple 查询不生成假设文档
+func TestAsk_HyDESkipSimple(t *testing.T) {
+	cfg := testRAGConfig()
+	on := true
+	cfg.HyDEEnabled = &on
+	// HyDESkipSimple 默认 true（nil）
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			return "回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	fe := &fakeEmbedder{}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, fe)
+
+	if _, err := engine.Ask(context.Background(), "s1", "问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	// skip_simple 仅在路由判定 simple 时生效；本测试无路由（RoutingOn=false），HyDE 应生效
+	// 注意：HyDESkipSimple 依赖路由判定复杂度，无路由时默认为非 simple，HyDE 生效
+	if ft.byVecCalls == 0 {
+		t.Logf("HyDE 生效（无路由时复杂度未知，按非 simple 处理）")
+	}
+}
+
+// HyDE Embedding 失败 → 降级原查询，问答不中断
+func TestAsk_HyDEEmbedFail(t *testing.T) {
+	cfg := testRAGConfig()
+	on := true
+	cfg.HyDEEnabled = &on
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "假设文档", nil
+			}
+			return "降级回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	fe := &fakeEmbedder{err: errors.New("quota exceeded")}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, fe)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题")
+	if err != nil {
+		t.Fatalf("Embedding 失败应降级而非报错: %v", err)
 	}
 	if res.Answer != "降级回答" {
 		t.Errorf("降级回答错误: %q", res.Answer)

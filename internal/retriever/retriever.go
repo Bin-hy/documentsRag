@@ -17,6 +17,8 @@ type Retriever interface {
 	Search(ctx context.Context, req RetrieveRequest) ([]RetrieveResult, error)
 	// SearchMulti 多查询检索：多路并行 Search，跨路 RRF 融合为 Top-K
 	SearchMulti(ctx context.Context, req RetrieveRequest, queries []string) ([]RetrieveResult, error)
+	// SearchByVector 按向量检索（HyDE 用）：不走查询 embed，直接向量搜索
+	SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]RetrieveResult, error)
 }
 
 type defaultRetriever struct {
@@ -141,9 +143,13 @@ func (r *defaultRetriever) vectorSearch(ctx context.Context, query string, topK 
 	if len(vectors) == 0 {
 		return nil, nil
 	}
+	return r.vectorSearchByVec(ctx, vectors[0], topK, filter)
+}
 
+// vectorSearchByVec 按向量执行向量检索（HyDE 与查询共用）
+func (r *defaultRetriever) vectorSearchByVec(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]RetrieveResult, error) {
 	searchReq := vectorstore.SearchRequest{
-		Vector: vectors[0],
+		Vector: vector,
 		TopK:   topK,
 		Filter: filter,
 	}
@@ -165,6 +171,14 @@ func (r *defaultRetriever) vectorSearch(ctx context.Context, query string, topK 
 	}
 
 	return results, nil
+}
+
+// SearchByVector 按向量检索（HyDE 用）：无 BM25/重排，纯向量搜索
+func (r *defaultRetriever) SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]RetrieveResult, error) {
+	if topK <= 0 {
+		topK = r.config.TopK
+	}
+	return r.vectorSearchByVec(ctx, vector, topK, filter)
 }
 
 // SearchMulti 多查询检索：每路并行 Search（向量+BM25 内部 RRF），

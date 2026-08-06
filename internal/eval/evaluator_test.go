@@ -40,6 +40,15 @@ func (f *fakeRetriever) SearchMulti(ctx context.Context, req retriever.RetrieveR
 	return f.results, nil
 }
 
+func (f *fakeRetriever) SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.results, nil
+}
+
 // fakeEngine 返回固定回答与来源
 type fakeEngine struct {
 	answer  string
