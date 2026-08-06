@@ -1,0 +1,74 @@
+/* BinRag 全局样式：CSS 变量 + 亮/暗主题 */
+:root {
+  /* 亮色主题变量 */
+  --br-bg: #f5f7fa;
+  --br-bg-card: #ffffff;
+  --br-text: #303133;
+  --br-text-secondary: #909399;
+  --br-border: #e4e7ed;
+  --br-primary: #409eff;
+  --br-hover: #f0f2f5;
+  --br-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+}
+
+html.dark {
+  /* 暗色主题变量（配合 Element Plus dark 模式） */
+  --br-bg: #141414;
+  --br-bg-card: #1d1e1f;
+  --br-text: #e5eaf3;
+  --br-text-secondary: #a3a6ad;
+  --br-border: #414243;
+  --br-primary: #409eff;
+  --br-hover: #2a2b2c;
+  --br-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--br-bg);
+  color: var(--br-text);
+  font-family:
+    'PingFang SC',
+    'Helvetica Neue',
+    'Microsoft YaHei',
+    -apple-system,
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--br-border);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--br-text-secondary);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 通用工具类 */
+.br-muted {
+  color: var(--br-text-secondary);
+}
+.br-text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

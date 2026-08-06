@@ -1,0 +1,47 @@
+# BinRag 桌面版构建任务（Taskfile v3，可用 `wails3 task <name>` 或 `task <name>` 执行）
+version: '3'
+
+vars:
+  APP_NAME: BinRag
+  BIN_DIR: bin
+  BUNDLE_ID: com.binrag.app
+
+tasks:
+  build:
+    desc: 构建桌面应用（前端产物 + Go 二进制）
+    cmds:
+      - task: build:frontend
+      - task: build:binary
+
+  build:frontend:
+    desc: 构建前端产物（输出到 internal/webui/dist，被 go:embed 打包）
+    cmds:
+      - cd frontend && npm run build
+
+  build:binary:
+    desc: 编译桌面入口（macOS）
+    cmds:
+      - go build -trimpath -o "{{.BIN_DIR}}/{{.APP_NAME}}" ./cmd/desktop
+
+  run:
+    desc: 本地运行桌面应用（默认加载 configs/config.local.yaml）
+    cmds:
+      - go run ./cmd/desktop -c configs/config.local.yaml
+
+  package:
+    desc: 组装 macOS .app 安装包（含 adhoc 签名）
+    deps:
+      - build
+    cmds:
+      - rm -rf "{{.BIN_DIR}}/{{.APP_NAME}}.app"
+      - mkdir -p "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS"
+      - cp "{{.BIN_DIR}}/{{.APP_NAME}}" "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/MacOS/"
+      - cp build/darwin/Info.plist "{{.BIN_DIR}}/{{.APP_NAME}}.app/Contents/Info.plist"
+      - codesign --force --deep -s - "{{.BIN_DIR}}/{{.APP_NAME}}.app"
+
+  package:dmg:
+    desc: 组装 .dmg 磁盘映像（依赖 package）
+    deps:
+      - package
+    cmds:
+      - hdiutil create -volname "{{.APP_NAME}}" -srcfolder "{{.BIN_DIR}}/{{.APP_NAME}}.app" -ov -format UDZO "{{.BIN_DIR}}/{{.APP_NAME}}.dmg"

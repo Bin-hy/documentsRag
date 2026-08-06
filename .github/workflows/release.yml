@@ -1,0 +1,210 @@
+# 发布工作流：推送 v* 标签时触发多平台交叉编译，生成安装包并发布到 GitHub Release
+#
+# 产物：
+#   - Web 版（纯 Go 无 CGO，全平台交叉编译）：
+#       binrag-<tag>-linux-amd64.tar.gz / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.zip
+#       每包 = binrag-server 二进制 + configs/config.yaml 示例配置 + README + 启动脚本
+#   - 桌面版（Wails，CGO，仅本机架构）：
+#       macOS: BinRag.app + BinRag.dmg（含示例配置）
+#       Windows: binrag-desktop-windows-amd64.zip（exe + 示例配置 + 启动脚本）
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  # ---------- Web 版：交叉编译（无 CGO，任意平台） ----------
+  web-cross-build:
+    name: Web 版 ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端（产物进 internal/webui/dist，被 go:embed 打包）
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: 交叉编译 Web 版
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          EXT=""
+          [ "$GOOS" = "windows" ] && EXT=".exe"
+          mkdir -p dist-web
+          CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" \
+            -o "dist-web/binrag-server${EXT}" ./cmd/server
+
+      - name: 组装发布包（二进制 + 配置 + 启动脚本）
+        run: |
+          PKG="dist-web/binrag-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "$PKG/configs"
+          cp dist-web/binrag-server* "$PKG/"
+          cp configs/config.yaml "$PKG/configs/"
+          cp README.md "$PKG/"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            printf '@echo off\r\nbinrag-server.exe -c configs/config.yaml\r\npause\r\n' > "$PKG/start.bat"
+          else
+            printf '#!/bin/sh\ncd "$(dirname "$0")"\n./binrag-server -c configs/config.yaml\n' > "$PKG/start.sh"
+            chmod +x "$PKG/start.sh"
+          fi
+
+      - name: 压缩
+        run: |
+          cd dist-web
+          PKG="binrag-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip -r "../${PKG}.zip" "$PKG"
+          else
+            tar -czf "../${PKG}.tar.gz" "$PKG"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binrag-web-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: binrag-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.*
+          if-no-files-found: error
+
+  # ---------- 桌面版 macOS（CGO，macos runner 本机构建） ----------
+  desktop-macos:
+    name: 桌面版 macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: 编译桌面二进制
+        run: go build -trimpath -ldflags="-w -s" -o bin/BinRag ./cmd/desktop
+
+      - name: 组装 .app 并签名
+        run: |
+          mkdir -p "bin/BinRag.app/Contents/MacOS"
+          cp bin/BinRag "bin/BinRag.app/Contents/MacOS/"
+          cp build/darwin/Info.plist "bin/BinRag.app/Contents/Info.plist"
+          codesign --force --deep -s - "bin/BinRag.app"
+
+      - name: 生成 .dmg（应用 + 示例配置 + README）
+        run: |
+          mkdir -p "bin/dmg-staging/configs"
+          cp -R "bin/BinRag.app" "bin/dmg-staging/"
+          cp configs/config.yaml "bin/dmg-staging/configs/"
+          cp README.md "bin/dmg-staging/"
+          hdiutil create -volname "BinRag" -srcfolder "bin/dmg-staging" \
+            -ov -format UDZO "bin/BinRag.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binrag-desktop-darwin
+          path: |
+            bin/BinRag.dmg
+            bin/BinRag.app
+          if-no-files-found: error
+
+  # ---------- 桌面版 Windows（CGO + MinGW，windows runner 本机构建） ----------
+  desktop-windows:
+    name: 桌面版 Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装 MinGW（Wails/webview 的 CGO 依赖）
+        run: choco install mingw -y --no-progress
+
+      - name: 构建前端
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: 编译桌面二进制
+        run: go build -trimpath -ldflags="-w -s" -o bin/binrag-desktop.exe ./cmd/desktop
+
+      - name: 组装发布包（exe + 配置 + 启动脚本）
+        shell: pwsh
+        run: |
+          $pkg = "bin/binrag-desktop-windows-${{ github.ref_name }}"
+          New-Item -ItemType Directory -Force -Path "$pkg/configs" | Out-Null
+          Copy-Item bin/binrag-desktop.exe "$pkg/"
+          Copy-Item configs/config.yaml "$pkg/configs/"
+          Copy-Item README.md "$pkg/"
+          Set-Content -Path "$pkg/start.bat" -Value "@echo off`r`nbinrag-desktop.exe -c configs/config.yaml`r`npause`r`n"
+          Compress-Archive -Path "$pkg" -DestinationPath "bin/binrag-desktop-windows-amd64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binrag-desktop-windows
+          path: bin/binrag-desktop-windows-amd64.zip
+          if-no-files-found: error
+
+  # ---------- 汇总发布到 GitHub Release ----------
+  release:
+    name: 发布 Release
+    needs: [web-cross-build, desktop-macos, desktop-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: binrag-*
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**
+          generate_release_notes: true

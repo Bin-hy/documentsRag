@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Bin-hy/bin-rag/internal/app"
+)
 
 func TestParseConfigFlag(t *testing.T) {
 	cases := []struct {
@@ -20,9 +24,9 @@ func TestParseConfigFlag(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseConfigFlag(tc.args)
+			got := app.ParseConfigFlag(tc.args)
 			if got != tc.want {
-				t.Errorf("parseConfigFlag(%v) = %q, want %q", tc.args, got, tc.want)
+				t.Errorf("app.ParseConfigFlag(%v) = %q, want %q", tc.args, got, tc.want)
 			}
 		})
 	}

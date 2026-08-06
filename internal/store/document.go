@@ -14,6 +14,9 @@ func (s *pgStore) CreateDocument(ctx context.Context, doc Document) error {
 	if doc.ID == "" || doc.KBID == "" {
 		return fmt.Errorf("文档 ID 与 KBID 不能为空")
 	}
+	if doc.ChunkIDs == nil {
+		doc.ChunkIDs = []string{} // chunk_ids 列 NOT NULL，nil 绑定 NULL 会违反约束
+	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO documents (id, kb_id, filename, format, size, status, chunk_ids, file_path, task_id, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -66,6 +69,9 @@ func (s *pgStore) GetDocument(ctx context.Context, id string) (*Document, error)
 
 // UpdateDocumentStatus 更新文档状态并回填 chunk IDs
 func (s *pgStore) UpdateDocumentStatus(ctx context.Context, id string, status string, chunkIDs []string) error {
+	if chunkIDs == nil {
+		chunkIDs = []string{} // 同上：NOT NULL 列不允许 NULL
+	}
 	_, err := s.pool.Exec(ctx,
 		`UPDATE documents SET status = $2, chunk_ids = $3 WHERE id = $1`,
 		id, status, chunkIDs,

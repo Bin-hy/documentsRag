@@ -16,13 +16,20 @@
 - **多知识库隔离** — 单向量集合 + payload 过滤，检索按知识库范围严格隔离
 - **异步入库** — 上传即返回任务 ID，后台 worker 池执行入库，失败自动/手动重试，状态持久化
 - **API Key 认证** — 密钥哈希存储、启停管理、使用时间追踪，接口安全可控
+- **Web 前端界面** — Vue 3 + TypeScript 单页应用：对话问答（流式打字机 / Markdown 渲染 / 引用来源卡片 / 多会话）、知识库管理、文档拖拽上传与任务跟踪、API Key 管理，由 Go 二进制直接托管（单一可执行文件）
+- **桌面应用** — Wails v3 打包 macOS 安装包（.app / .dmg），内嵌完整后端，安装即用；Web 与桌面共用同一套前端代码
 
 ## 🏗 架构
 
 ```mermaid
 graph TB
+    subgraph 前端（frontend/）
+        UI[Vue 3 + TypeScript SPA] --> HTTP[HTTP / SSE]
+        UI2[Wails 桌面窗口] --> HTTP
+    end
+
     subgraph API层
-        A[HTTP API] --> AUTH[API Key 认证]
+        HTTP --> AUTH[API Key 认证]
         AUTH --> KB[知识库管理]
         AUTH --> DOC[文档上传]
         AUTH --> CHAT[问答 / SSE 流式]
@@ -48,6 +55,10 @@ graph TB
     end
 ```
 
+- **Web 形态**：`cmd/server` 启动 HTTP 服务并托管前端静态资源（`internal/webui` go:embed），浏览器访问即得完整界面
+- **桌面形态**：`cmd/desktop`（Wails v3）启动内嵌后端监听 `127.0.0.1` 随机端口，窗口直接加载该地址——前端代码零差异、同源无代理层
+- **装配复用**：`internal/app` 统一装配存储 / worker / 引擎 / 路由，两种形态共享同一套启动逻辑
+
 ## 🧰 技术栈
 
 | 层次 | 技术 |
@@ -58,6 +69,8 @@ graph TB
 | 元数据存储 | PostgreSQL（pgx / 连接池） |
 | Embedding / LLM | OpenAI 兼容接口（GPT / 豆包 / DeepSeek / 本地 vLLM 等，base_url 切换） |
 | 检索 | 向量 + BM25 + RRF 融合 + Cross-encoder 重排序 |
+| 前端 | Vue 3 + TypeScript + Vite + Element Plus + Pinia + marked/highlight.js |
+| 桌面壳 | Wails v3（macOS .app / .dmg，内嵌 Go 后端） |
 | 认证 | API Key（SHA-256 哈希存储） |
 | 容器化 | Docker Compose（Qdrant + PostgreSQL） |
 
@@ -105,11 +118,20 @@ server:
   bootstrap_api_key: "sk-your-bootstrap-key"   # 首次启动种子密钥
 ```
 
-### 3. 启动服务
+### 3. 构建并启动服务
+
+Web 形态（单一可执行文件，自带前端界面）：
 
 ```bash
-go run ./cmd/server -c configs/config.local.yaml
+# 首次需构建前端产物（输出到 internal/webui/dist，被 go:embed 打包进二进制）
+cd frontend && npm install && npm run build && cd ..
+
+# 编译并启动
+go build -o binrag-server ./cmd/server
+./binrag-server -c configs/config.local.yaml
 ```
+
+启动后浏览器访问 `http://localhost:8085`（端口见配置 `server.port`），输入 API Key 即可登录使用完整界面。
 
 或指定其他配置文件 / 环境变量 / 默认路径（`-c` 优先级最高）：
 
@@ -151,6 +173,47 @@ curl -N -X POST "http://localhost:8080/api/v1/chat?stream=1" \
   -d '{"session_id":"demo","question":"如何部署？","kb_id":"<kb_id>"}'
 ```
 
+## 🛠 构建与打包
+
+### Web 版（多平台交叉编译）
+
+Web 版为纯 Go（前端已嵌入二进制，无 CGO），可交叉编译任意平台：
+
+```bash
+# 前端产物只需构建一次（输出到 internal/webui/dist）
+cd frontend && npm install && npm run build && cd ..
+
+# 交叉编译示例
+CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -trimpath -o bin/binrag-server-linux-amd64   ./cmd/server
+CGO_ENABLED=0 GOOS=linux   GOARCH=arm64 go build -trimpath -o bin/binrag-server-linux-arm64   ./cmd/server
+CGO_ENABLED=0 GOOS=darwin  GOARCH=arm64 go build -trimpath -o bin/binrag-server-darwin-arm64  ./cmd/server
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o bin/binrag-server-windows-amd64.exe ./cmd/server
+```
+
+发布包建议包含：二进制 + `configs/config.yaml`（示例配置）+ 启动脚本，见 `.github/workflows/release.yml` 的打包方式。
+
+### 桌面版（macOS）
+
+桌面版依赖 Wails v3（CGO），需在 macOS 本机构建，产物包含完整后端：
+
+```bash
+# 一键构建并组装 .app（内部：前端构建 → go build ./cmd/desktop → 组装 + adhoc 签名）
+wails3 task package          # 产物：bin/BinRag.app
+wails3 task package:dmg      # 可选：再生成 bin/BinRag.dmg 安装映像
+```
+
+> 需要先安装 `wails3` CLI：`go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.4`
+
+桌面应用启动后自动在 `127.0.0.1` 随机端口启动内嵌后端，窗口直接加载界面；数据库 / 向量库 / 模型仍连接外部服务（配置文件可用 `-c` 指定，默认 `./configs/config.yaml`）。
+
+### 自动发布（GitHub Actions）
+
+推送 `v*` 标签自动触发 `.github/workflows/release.yml`：
+
+- **Web 版交叉编译**：Linux（amd64/arm64）、macOS（amd64/arm64）、Windows（amd64），每包含二进制 + 示例配置 + 启动脚本
+- **桌面版**：macOS（.app + .dmg）、Windows（.exe，需 MinGW）
+- 前端缓存与 Go 构建缓存加速重复构建
+
 ## 📡 API 概览
 
 | 方法 | 路径 | 说明 |
@@ -173,20 +236,27 @@ curl -N -X POST "http://localhost:8080/api/v1/chat?stream=1" \
 ## 📁 项目结构
 
 ```
-cmd/server/            服务入口（-c / --config 指定配置文件）
+cmd/
+├── server/              Web 服务入口（-c / --config 指定配置文件，托管前端静态资源）
+└── desktop/             桌面应用入口（Wails v3：内嵌后端 + 窗口加载本地服务）
+frontend/                Vue 3 + TypeScript 前端（Web 与桌面共用，npm run build 产物进 internal/webui/dist）
 internal/
-├── api/               HTTP 层：路由、中间件（认证/日志/CORS/限流）、Handler、SSE
-├── store/             PostgreSQL 元数据存储：知识库/文档/任务/API Key/对话历史
-├── task/              异步入库 worker 池（状态机 + 失败重试 + 重启恢复）
-├── loader/            文档加载器（TXT/Markdown/PDF/DOCX/CSV/Excel/HTML）
-├── chunker/           分块器（固定大小 / 递归字符 / Markdown 标题）
-├── embedding/         Embedding 客户端（OpenAI 兼容）
-├── vectorstore/       Qdrant 向量存储
-├── retriever/         混合检索（向量 + BM25 + RRF 融合，按知识库过滤）
-├── reranker/          Cross-encoder 重排序客户端
-├── rag/               RAG 编排（Query 改写 / 上下文组装 / 生成 / 对话历史）
-└── llm/               LLM 客户端（普通生成 / SSE 流式）
-docs/                  各阶段的 spec / plan / task / checklist 设计文档
+├── app/                 服务装配（PostgreSQL / worker / 引擎 / 路由，Web 与桌面共用）
+├── webui/               前端静态资源托管（go:embed dist + SPA 回退）
+├── api/                 HTTP 层：路由、中间件（认证/日志/CORS/限流）、Handler、SSE
+├── store/               PostgreSQL 元数据存储：知识库/文档/任务/API Key/对话历史
+├── task/                异步入库 worker 池（状态机 + 失败重试 + 重启恢复）
+├── loader/              文档加载器（TXT/Markdown/PDF/DOCX/CSV/Excel/HTML）
+├── chunker/             分块器（固定大小 / 递归字符 / Markdown 标题）
+├── embedding/           Embedding 客户端（OpenAI 兼容）
+├── vectorstore/         Qdrant 向量存储
+├── retriever/           混合检索（向量 + BM25 + RRF 融合，按知识库过滤）
+├── reranker/            Cross-encoder 重排序客户端
+├── rag/                 RAG 编排（Query 改写 / 上下文组装 / 生成 / 对话历史）
+└── llm/                 LLM 客户端（普通生成 / SSE 流式）
+build/                   macOS .app 打包资源（Info.plist）
+.github/workflows/       release.yml：tag 触发多平台交叉编译发布
+docs/                    各阶段的 spec / plan / task / checklist 设计文档
 ```
 
 ## 📍 当前阶段情况
@@ -200,7 +270,7 @@ docs/                  各阶段的 spec / plan / task / checklist 设计文档
 | 五 | 检索器与重排序（混合检索 + RRF） | ✅ 完成 |
 | 六 | LLM 集成与 RAG 编排（改写 / 流式 / 历史） | ✅ 完成 |
 | 七 | API 层与知识库管理（REST / 异步入库 / 认证） | ✅ 完成 |
-| 八 | 评估与优化（数据集 / Recall@K / LLM-as-Judge） | ⏳ 规划中 |
+| 八 | 前端界面（Web SPA + Wails 桌面，对话/知识库/文档/密钥管理） | ✅ 完成 |
 
 每个阶段的完整设计文档（spec → plan → task → checklist）见 `docs/` 目录。
 

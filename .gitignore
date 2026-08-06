@@ -1,10 +1,42 @@
 # agent config
 .reasonix/
 .claude/
+.codegraph/
 
+# 本地 git 元数据镜像（子模块 gitdir 的 workspace 内副本）
+.git-internal/
 
-# 忽略本地
+# macOS
+.DS_Store
+
+# 本地配置
 *.local.*
 
-# 文件上传
+# 文件上传存储
+data/
 .data/
+
+# 前端依赖与产物
+frontend/node_modules/
+*/dist/
+
+# Go / 前端构建产物（保留占位 index.html 保证 go:embed 可编译）
+bin/
+binrag-server
+/desktop
+*.exe
+*.test
+
+# 桌面打包产物
+*.app
+*.dmg
+*.deb
+*.rpm
+*.AppImage
+
+# 前端产物目录：整体忽略，仅保留占位 index.html
+internal/webui/dist/*
+!internal/webui/dist/index.html
+
+# 日志
+*.log

@@ -151,6 +151,10 @@ func (w *defaultWorkerPool) fail(ctx context.Context, t store.Task, err error) {
 		t.Status = store.TaskStatusFailed
 		t.ErrorMessage = err.Error()
 		slog.Error("入库任务失败（超过重试上限）", "task", t.ID, "err", err)
+		// 同步文档状态为 failed，保证文档列表反映真实入库结果
+		if err := w.store.UpdateDocumentStatus(ctx, t.DocumentID, store.DocStatusFailed, nil); err != nil {
+			slog.Warn("更新文档状态失败", "doc", t.DocumentID, "err", err)
+		}
 	}
 	if err := w.store.UpdateTask(ctx, t); err != nil {
 		slog.Warn("更新任务状态失败", "task", t.ID, "err", err)

@@ -78,7 +78,8 @@ func (h *handler) UploadDocument(c *gin.Context) {
 		return
 	}
 
-	// 创建文档与任务记录
+	// 创建文档与任务记录（taskID 先于文档生成并回填，保证文档可关联到任务）
+	taskID := uuid.New().String()
 	doc := store.Document{
 		ID:        docID,
 		KBID:      kbID,
@@ -87,6 +88,7 @@ func (h *handler) UploadDocument(c *gin.Context) {
 		Size:      file.Size,
 		Status:    store.DocStatusPending,
 		FilePath:  filePath,
+		TaskID:    taskID,
 		CreatedAt: time.Now(),
 	}
 	if err := h.store.CreateDocument(ctx, doc); err != nil {
@@ -94,7 +96,6 @@ func (h *handler) UploadDocument(c *gin.Context) {
 		return
 	}
 
-	taskID := uuid.New().String()
 	task := store.Task{
 		ID:         taskID,
 		KBID:       kbID,
