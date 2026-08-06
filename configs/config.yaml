@@ -131,6 +131,20 @@ rag:
   hyde_enabled: false
   # 简单查询是否跳过 HyDE（true/不配置 = 跳过，节省成本）
   hyde_skip_simple: true
+  # 全局默认检索策略（三级覆盖：全局 → 知识库 → 单次请求；字段空 = 继承低层级）
+  strategy:
+    # 查询模式：single / multi
+    query: multi
+    # 多路融合：rrf / none
+    fusion: rrf
+    # 问题分解：off / parallel / sequential
+    decomposition: off
+    # 回退查询：off / on
+    step_back: off
+    # HyDE 假设文档：off / on
+    hyde: off
+    # 自动路由：off / auto
+    routing: off
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数

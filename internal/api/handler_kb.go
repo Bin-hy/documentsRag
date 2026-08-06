@@ -1,9 +1,11 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"time"
 
+	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -12,14 +14,16 @@ import (
 
 // createKBRequest 创建知识库请求
 type createKBRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Name        string                 `json:"name" binding:"required"`
+	Description string                 `json:"description"`
+	Strategy    *config.StrategyConfig `json:"strategy,omitempty"` // 知识库级策略
 }
 
 // updateKBRequest 更新知识库请求
 type updateKBRequest struct {
-	Name        string `json:"name" binding:"required"`
-	Description string `json:"description"`
+	Name        string                 `json:"name" binding:"required"`
+	Description string                 `json:"description"`
+	Strategy    *config.StrategyConfig `json:"strategy,omitempty"` // 知识库级策略（nil = 不修改）
 }
 
 // CreateKB 创建知识库
@@ -49,6 +53,14 @@ func (h *handler) CreateKB(c *gin.Context) {
 		Description: req.Description,
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
+	}
+	if req.Strategy != nil {
+		b, err := json.Marshal(req.Strategy)
+		if err != nil {
+			Fail(c, CodeBadRequest, "策略格式无效")
+			return
+		}
+		kb.Strategy = string(b)
 	}
 	if err := h.store.CreateKB(c.Request.Context(), kb); err != nil {
 		Fail(c, CodeInternal, "创建知识库失败")
@@ -138,6 +150,14 @@ func (h *handler) UpdateKB(c *gin.Context) {
 
 	kb.Name = req.Name
 	kb.Description = req.Description
+	if req.Strategy != nil {
+		b, err := json.Marshal(req.Strategy)
+		if err != nil {
+			Fail(c, CodeBadRequest, "策略格式无效")
+			return
+		}
+		kb.Strategy = string(b)
+	}
 	if err := h.store.UpdateKB(c.Request.Context(), *kb); err != nil {
 		Fail(c, CodeInternal, "更新知识库失败")
 		return

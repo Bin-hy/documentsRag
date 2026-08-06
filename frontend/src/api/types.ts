@@ -8,11 +8,22 @@ export interface ApiResponse<T> {
   data: T
 }
 
+// 检索策略配置（三级覆盖：全局 → 知识库 → 单次请求；字段空 = 继承低层级）
+export interface StrategyConfig {
+  query?: 'single' | 'multi'
+  fusion?: 'rrf' | 'none'
+  decomposition?: 'off' | 'parallel' | 'sequential'
+  step_back?: 'off' | 'on'
+  hyde?: 'off' | 'on'
+  routing?: 'off' | 'auto'
+}
+
 // 知识库
 export interface Kb {
   ID: string
   Name: string
   Description: string
+  Strategy: string // 策略配置 JSON 字符串（空 = 用全局默认）
   CreatedAt: string
   UpdatedAt: string
 }
@@ -84,6 +95,7 @@ export interface ChatRequest {
   session_id: string
   question: string
   kb_id: string // 知识库范围，空表示不限定
+  strategy?: StrategyConfig // 单次请求策略覆盖
 }
 
 // SSE 事件（后端序列：sources → chunk×N → done，或 error）

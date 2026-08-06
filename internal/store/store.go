@@ -39,6 +39,7 @@ type KnowledgeBase struct {
 	ID          string
 	Name        string
 	Description string
+	Strategy    string // 策略配置 JSON（空 = 用全局默认）
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }

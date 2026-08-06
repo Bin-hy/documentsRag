@@ -24,7 +24,7 @@ func TestCreateKB(t *testing.T) {
 	kb := KnowledgeBase{ID: "kb-1", Name: "测试库", Description: "描述", CreatedAt: now(), UpdatedAt: now()}
 
 	mock.ExpectExec("INSERT INTO knowledge_bases").
-		WithArgs(kb.ID, kb.Name, kb.Description, pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs(kb.ID, kb.Name, kb.Description, kb.Strategy, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	if err := s.CreateKB(context.Background(), kb); err != nil {

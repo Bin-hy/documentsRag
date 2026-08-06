@@ -88,33 +88,54 @@ type LLMConfig struct {
 	Timeout     int     `yaml:"timeout"` // 秒
 }
 
+// StrategyConfig 检索策略配置（三级覆盖：全局 config.yaml → 知识库 → 单次请求）
+// 字段取值：
+//
+//	Query: single / multi
+//	Fusion: rrf / none
+//	Decomposition: off / parallel / sequential
+//	StepBack: off / on
+//	HyDE: off / on
+//	Routing: off / auto
+//
+// 空字符串表示「未设置，继承低层级」（全局默认由 applyDefaults 兜底）
+type StrategyConfig struct {
+	Query         string `yaml:"query" json:"query,omitempty"`
+	Fusion        string `yaml:"fusion" json:"fusion,omitempty"`
+	Decomposition string `yaml:"decomposition" json:"decomposition,omitempty"`
+	StepBack      string `yaml:"step_back" json:"step_back,omitempty"`
+	HyDE          string `yaml:"hyde" json:"hyde,omitempty"`
+	Routing       string `yaml:"routing" json:"routing,omitempty"`
+}
+
 // RAGConfig RAG 编排配置
 type RAGConfig struct {
-	TopK                      int    `yaml:"top_k"`
-	MaxContextTokens          int    `yaml:"max_context_tokens"`
-	MaxChunks                 int    `yaml:"max_chunks"`
-	EnableRewrite             *bool  `yaml:"enable_rewrite"`
-	MultiQueryEnabled         *bool  `yaml:"multi_query_enabled"`
-	MultiQueryCount           int    `yaml:"multi_query_count"`
-	MultiQueryConcurrency     int    `yaml:"multi_query_concurrency"`
-	MultiQueryTemplatePath    string `yaml:"multi_query_template_path"`
-	DecompositionEnabled      *bool  `yaml:"decomposition_enabled"`
-	DecompositionMode         string `yaml:"decomposition_mode"`
-	DecompositionMaxSub       int    `yaml:"decomposition_max_sub"`
-	StepBackEnabled           *bool  `yaml:"step_back_enabled"`
-	DecompositionTemplatePath string `yaml:"decomposition_template_path"`
-	StepBackTemplatePath      string `yaml:"step_back_template_path"`
-	RoutingEnabled            *bool  `yaml:"routing_enabled"`
-	RoutingFallback           string `yaml:"routing_fallback"`
-	HyDEEnabled               *bool  `yaml:"hyde_enabled"`
-	HyDESkipSimple            *bool  `yaml:"hyde_skip_simple"`
-	RoutingTemplatePath       string `yaml:"routing_template_path"`
-	HyDETemplatePath          string `yaml:"hyde_template_path"`
-	HistoryCapacity           int    `yaml:"history_capacity"`
-	HistoryLimit              int    `yaml:"history_limit"`
-	SystemPromptPath          string `yaml:"system_prompt_path"`
-	ContextTemplatePath       string `yaml:"context_template_path"`
-	RewriteTemplatePath       string `yaml:"rewrite_template_path"`
+	TopK                      int            `yaml:"top_k"`
+	MaxContextTokens          int            `yaml:"max_context_tokens"`
+	MaxChunks                 int            `yaml:"max_chunks"`
+	EnableRewrite             *bool          `yaml:"enable_rewrite"`
+	MultiQueryEnabled         *bool          `yaml:"multi_query_enabled"`
+	MultiQueryCount           int            `yaml:"multi_query_count"`
+	MultiQueryConcurrency     int            `yaml:"multi_query_concurrency"`
+	MultiQueryTemplatePath    string         `yaml:"multi_query_template_path"`
+	DecompositionEnabled      *bool          `yaml:"decomposition_enabled"`
+	DecompositionMode         string         `yaml:"decomposition_mode"`
+	DecompositionMaxSub       int            `yaml:"decomposition_max_sub"`
+	StepBackEnabled           *bool          `yaml:"step_back_enabled"`
+	DecompositionTemplatePath string         `yaml:"decomposition_template_path"`
+	StepBackTemplatePath      string         `yaml:"step_back_template_path"`
+	RoutingEnabled            *bool          `yaml:"routing_enabled"`
+	RoutingFallback           string         `yaml:"routing_fallback"`
+	HyDEEnabled               *bool          `yaml:"hyde_enabled"`
+	HyDESkipSimple            *bool          `yaml:"hyde_skip_simple"`
+	RoutingTemplatePath       string         `yaml:"routing_template_path"`
+	HyDETemplatePath          string         `yaml:"hyde_template_path"`
+	Strategy                  StrategyConfig `yaml:"strategy"` // 全局默认策略
+	HistoryCapacity           int            `yaml:"history_capacity"`
+	HistoryLimit              int            `yaml:"history_limit"`
+	SystemPromptPath          string         `yaml:"system_prompt_path"`
+	ContextTemplatePath       string         `yaml:"context_template_path"`
+	RewriteTemplatePath       string         `yaml:"rewrite_template_path"`
 }
 
 // RewriteEnabled 是否启用 Query 改写（nil 视为启用，即默认开启）
@@ -299,6 +320,25 @@ func (c *Config) applyDefaults() {
 	// Routing / HyDE 默认值
 	if c.RAG.RoutingFallback == "" {
 		c.RAG.RoutingFallback = "multi_query"
+	}
+	// Strategy 默认值（与阶段一~三默认一致：multi 开、rrf 融合、其余 off）
+	if c.RAG.Strategy.Query == "" {
+		c.RAG.Strategy.Query = "multi"
+	}
+	if c.RAG.Strategy.Fusion == "" {
+		c.RAG.Strategy.Fusion = "rrf"
+	}
+	if c.RAG.Strategy.Decomposition == "" {
+		c.RAG.Strategy.Decomposition = "off"
+	}
+	if c.RAG.Strategy.StepBack == "" {
+		c.RAG.Strategy.StepBack = "off"
+	}
+	if c.RAG.Strategy.HyDE == "" {
+		c.RAG.Strategy.HyDE = "off"
+	}
+	if c.RAG.Strategy.Routing == "" {
+		c.RAG.Strategy.Routing = "off"
 	}
 	// Loader 默认值
 	if c.Loader.MinReadableChars == 0 {

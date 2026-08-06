@@ -12,9 +12,9 @@ func (s *pgStore) CreateKB(ctx context.Context, kb KnowledgeBase) error {
 		return fmt.Errorf("知识库 ID 不能为空")
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO knowledge_bases (id, name, description, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		kb.ID, kb.Name, kb.Description, kb.CreatedAt, kb.UpdatedAt,
+		`INSERT INTO knowledge_bases (id, name, description, strategy, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		kb.ID, kb.Name, kb.Description, kb.Strategy, kb.CreatedAt, kb.UpdatedAt,
 	)
 	return err
 }
@@ -22,7 +22,7 @@ func (s *pgStore) CreateKB(ctx context.Context, kb KnowledgeBase) error {
 // ListKBs 列出全部知识库
 func (s *pgStore) ListKBs(ctx context.Context) ([]KnowledgeBase, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, description, created_at, updated_at FROM knowledge_bases ORDER BY created_at DESC`)
+		`SELECT id, name, description, strategy, created_at, updated_at FROM knowledge_bases ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func (s *pgStore) ListKBs(ctx context.Context) ([]KnowledgeBase, error) {
 	kbs := make([]KnowledgeBase, 0)
 	for rows.Next() {
 		var kb KnowledgeBase
-		if err := rows.Scan(&kb.ID, &kb.Name, &kb.Description, &kb.CreatedAt, &kb.UpdatedAt); err != nil {
+		if err := rows.Scan(&kb.ID, &kb.Name, &kb.Description, &kb.Strategy, &kb.CreatedAt, &kb.UpdatedAt); err != nil {
 			return nil, err
 		}
 		kbs = append(kbs, kb)
@@ -43,8 +43,8 @@ func (s *pgStore) ListKBs(ctx context.Context) ([]KnowledgeBase, error) {
 func (s *pgStore) GetKB(ctx context.Context, id string) (*KnowledgeBase, error) {
 	var kb KnowledgeBase
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, description, created_at, updated_at FROM knowledge_bases WHERE id = $1`, id,
-	).Scan(&kb.ID, &kb.Name, &kb.Description, &kb.CreatedAt, &kb.UpdatedAt)
+		`SELECT id, name, description, strategy, created_at, updated_at FROM knowledge_bases WHERE id = $1`, id,
+	).Scan(&kb.ID, &kb.Name, &kb.Description, &kb.Strategy, &kb.CreatedAt, &kb.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -54,8 +54,8 @@ func (s *pgStore) GetKB(ctx context.Context, id string) (*KnowledgeBase, error) 
 // UpdateKB 更新知识库（名称与描述）
 func (s *pgStore) UpdateKB(ctx context.Context, kb KnowledgeBase) error {
 	_, err := s.pool.Exec(ctx,
-		`UPDATE knowledge_bases SET name = $2, description = $3, updated_at = $4 WHERE id = $1`,
-		kb.ID, kb.Name, kb.Description, time.Now(),
+		`UPDATE knowledge_bases SET name = $2, description = $3, strategy = $4, updated_at = $5 WHERE id = $1`,
+		kb.ID, kb.Name, kb.Description, kb.Strategy, time.Now(),
 	)
 	return err
 }

@@ -1,17 +1,21 @@
 package api
 
 import (
+	"encoding/json"
+	"log/slog"
 	"strings"
 
+	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/rag"
 	"github.com/gin-gonic/gin"
 )
 
 // chatRequest 问答请求
 type chatRequest struct {
-	SessionID string `json:"session_id" binding:"required"`
-	Question  string `json:"question" binding:"required"`
-	KBID      string `json:"kb_id"` // 知识库范围，空表示不限定
+	SessionID string                 `json:"session_id" binding:"required"`
+	Question  string                 `json:"question" binding:"required"`
+	KBID      string                 `json:"kb_id"`              // 知识库范围，空表示不限定
+	Strategy  *config.StrategyConfig `json:"strategy,omitempty"` // 单次请求策略覆盖
 }
 
 // Chat 普通问答（返回回答与引用来源）
@@ -36,12 +40,30 @@ func (h *handler) Chat(c *gin.Context) {
 		return
 	}
 
-	result, err := h.engine.Ask(c.Request.Context(), req.SessionID, req.Question, rag.WithKBID(req.KBID))
+	result, err := h.engine.Ask(c.Request.Context(), req.SessionID, req.Question,
+		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy))
 	if err != nil {
 		Fail(c, CodeInternal, "问答失败: "+err.Error())
 		return
 	}
 	OK(c, result)
+}
+
+// kbStrategy 读取知识库级策略（JSON 解析失败返回 nil，用全局默认）
+func (h *handler) kbStrategy(c *gin.Context, kbID string) *config.StrategyConfig {
+	if kbID == "" {
+		return nil
+	}
+	kb, err := h.store.GetKB(c.Request.Context(), kbID)
+	if err != nil || kb.Strategy == "" {
+		return nil
+	}
+	var s config.StrategyConfig
+	if err := json.Unmarshal([]byte(kb.Strategy), &s); err != nil {
+		slog.Warn("知识库策略解析失败，用全局默认", "kb_id", kbID, "err", err)
+		return nil
+	}
+	return &s
 }
 
 // ChatStream SSE 流式问答：事件 sources → chunk×N → done（或 error）
@@ -54,7 +76,8 @@ func (h *handler) ChatStream(c *gin.Context) {
 		return
 	}
 
-	events, err := h.engine.StreamAsk(c.Request.Context(), req.SessionID, req.Question, rag.WithKBID(req.KBID))
+	events, err := h.engine.StreamAsk(c.Request.Context(), req.SessionID, req.Question,
+		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy))
 	if err != nil {
 		Fail(c, CodeInternal, "启动流式问答失败: "+err.Error())
 		return

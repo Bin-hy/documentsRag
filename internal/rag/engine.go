@@ -49,7 +49,9 @@ type Engine interface {
 
 // AskOptions 问答选项
 type AskOptions struct {
-	KBID string // 知识库范围，空表示不限定
+	KBID        string                 // 知识库范围，空表示不限定
+	KBStrategy  *config.StrategyConfig // 知识库级策略（nil = 用全局）
+	ReqStrategy *config.StrategyConfig // 请求级策略（nil = 未覆盖）
 }
 
 // AskOption 函数式问答选项
@@ -60,6 +62,14 @@ func WithKBID(kbID string) AskOption {
 	return func(o *AskOptions) { o.KBID = kbID }
 }
 
+// WithStrategy 设置知识库级与请求级策略（三级覆盖：请求 > 知识库 > 全局）
+func WithStrategy(kbStrategy, reqStrategy *config.StrategyConfig) AskOption {
+	return func(o *AskOptions) {
+		o.KBStrategy = kbStrategy
+		o.ReqStrategy = reqStrategy
+	}
+}
+
 // RAGEngine 编排实现：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
 type RAGEngine struct {
 	cfg       config.RAGConfig
@@ -68,6 +78,51 @@ type RAGEngine struct {
 	history   HistoryStore
 	templates promptTemplates
 	embedder  embedding.Embedder // HyDE 用（nil 时 HyDE 禁用）
+}
+
+// effective 解析合并策略（请求 > 知识库 > 全局），失败返回全局默认降级
+func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
+	// 全局默认：优先用旧开关推导（兼容阶段一~三配置），未显式设置时用 cfg.Strategy
+	global := e.cfg.Strategy
+	if global.Query == "" && global.Fusion == "" && global.Decomposition == "" &&
+		global.StepBack == "" && global.HyDE == "" && global.Routing == "" {
+		// 旧开关兜底：从 *On() 推导
+		global = config.StrategyConfig{}
+		if e.cfg.MultiQueryOn() {
+			global.Query = "multi"
+		} else {
+			global.Query = "single" // 显式单查询（防止默认 multi）
+			global.Fusion = "none"  // single 无多路可融合，必须 none
+		}
+		if e.cfg.DecompositionOn() {
+			global.Decomposition = e.cfg.DecompositionMode
+			if global.Decomposition == "" {
+				global.Decomposition = "parallel"
+			}
+		}
+		if e.cfg.StepBackOn() {
+			global.StepBack = "on"
+		}
+		if e.cfg.RoutingOn() {
+			global.Routing = "auto"
+		}
+		if e.cfg.HyDEOn() {
+			global.HyDE = "on"
+		}
+	}
+	var kb, req config.StrategyConfig
+	if o.KBStrategy != nil {
+		kb = *o.KBStrategy
+	}
+	if o.ReqStrategy != nil {
+		req = *o.ReqStrategy
+	}
+	eff, err := ResolveStrategy(global, kb, req)
+	if err != nil {
+		slog.Warn("策略合并校验失败，降级全局默认", "err", err)
+		return DefaultEffectiveStrategy()
+	}
+	return eff
 }
 
 // NewEngine 创建 RAG 编排器
@@ -89,9 +144,12 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	for _, opt := range opts {
 		opt(&o)
 	}
+	eff := e.effective(o)
+	slog.Info("生效策略", "query", eff.Query, "fusion", eff.Fusion, "decomposition", eff.Decomposition,
+		"step_back", eff.StepBack, "hyde", eff.HyDE, "routing", eff.Routing)
 
 	// RAG 路由：判定复杂度 → 按 strategy 分流
-	if e.cfg.RoutingOn() {
+	if eff.Routing == "auto" {
 		route, ok, err := e.routeQuery(ctx, question)
 		strategy := ""
 		if err != nil || !ok {
@@ -114,11 +172,11 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		// direct 或策略失败 → 落常规
 	}
 
-	if e.cfg.DecompositionOn() {
+	if eff.Decomposition != "off" {
 		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
 			return res, nil
 		}
-	} else if e.cfg.StepBackOn() {
+	} else if eff.StepBack == "on" {
 		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
 			return res, nil
 		}
@@ -159,8 +217,9 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 		opt(&o)
 	}
 	var strategyRes *RAGResult
+	eff := e.effective(o)
 	// RAG 路由：判定复杂度 → 按 strategy 分流
-	if e.cfg.RoutingOn() {
+	if eff.Routing == "auto" {
 		route, ok, err := e.routeQuery(ctx, question)
 		strategy := ""
 		if err != nil || !ok {
@@ -180,11 +239,11 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			}
 		}
 	}
-	if strategyRes == nil && e.cfg.DecompositionOn() {
+	if strategyRes == nil && eff.Decomposition != "off" {
 		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
 			strategyRes = res
 		}
-	} else if strategyRes == nil && e.cfg.StepBackOn() {
+	} else if strategyRes == nil && eff.StepBack == "on" {
 		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
 			strategyRes = res
 		}
@@ -265,6 +324,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 	for _, opt := range opts {
 		opt(&o)
 	}
+	eff := e.effective(o)
 
 	history, err := e.history.Get(sessionID, e.cfg.HistoryLimit)
 	if err != nil {
@@ -273,7 +333,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 
 	// Query 改写 / 多查询（多查询启用时替代单查询改写）
 	query := question
-	if e.cfg.MultiQueryOn() {
+	if eff.Query == "multi" {
 		// 多查询路径：生成变体 → 多路检索
 		multiStart := time.Now()
 		queries, err := e.multiQuery(ctx, history, question)
@@ -337,7 +397,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 	// 检索（携带知识库范围）；HyDE 启用且非多查询路径时用 hydeSearch 增强
 	retrieveStart := time.Now()
 	var chunks []retriever.RetrieveResult
-	if e.cfg.HyDEOn() && e.embedder != nil && !e.cfg.MultiQueryOn() {
+	if eff.HyDE == "on" && e.embedder != nil && eff.Query != "multi" {
 		chunks, err = e.hydeSearch(ctx, query, o)
 	} else {
 		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{

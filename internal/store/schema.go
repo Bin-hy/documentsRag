@@ -57,8 +57,17 @@ CREATE TABLE IF NOT EXISTS chat_history (
 CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history(session_id, created_at);
 `
 
+// 知识库策略列迁移（幂等：已有库补列）
+const kbStrategyMigration = `
+ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT '';
+`
+
 // Migrate 执行建表语句（幂等）
 func (s *pgStore) Migrate(ctx context.Context) error {
-	_, err := s.pool.Exec(ctx, schemaDDL)
+	if _, err := s.pool.Exec(ctx, schemaDDL); err != nil {
+		return err
+	}
+	// 追加策略列迁移（schemaDDL 的 CREATE TABLE IF NOT EXISTS 对已有表不生效，需显式 ALTER）
+	_, err := s.pool.Exec(ctx, kbStrategyMigration)
 	return err
 }

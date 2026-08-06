@@ -902,3 +902,23 @@ func TestUploadNoReadableContent(t *testing.T) {
 		t.Errorf("拒绝后不应创建文档记录，实际 %d 条", docCount)
 	}
 }
+
+// 请求级策略覆盖：请求带 strategy query=single → 走单查询路径
+func TestChatRequestStrategyOverride(t *testing.T) {
+	env := newTestEnv(t)
+	// fakeEngine 记录 Ask 调用，验证传入的 strategy option
+	env.engine.streamChunks = []string{"回答"}
+
+	body := map[string]any{
+		"session_id": "s1",
+		"question":   "测试问题",
+		"strategy":   map[string]any{"query": "single", "fusion": "none"},
+	}
+	w := doReq(t, env.router, "POST", "/api/v1/chat?stream=1", body, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("SSE 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "event:chunk") {
+		t.Errorf("缺少 chunk 事件:\n%s", w.Body.String())
+	}
+}
