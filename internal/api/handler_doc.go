@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -73,9 +74,18 @@ func (h *handler) UploadDocument(c *gin.Context) {
 
 	// 扩展名校验（能否解析）
 	info := loader.FileInfo{Filename: file.Filename, Size: file.Size}
-	if _, err := h.registry.Resolve(info); err != nil {
+	parser, err := h.registry.Resolve(info)
+	if err != nil {
 		Fail(c, CodeBadRequest, "不支持的文件格式: "+filepath.Ext(file.Filename))
 		return
+	}
+
+	// 上传预检：解析一次统计可读文本，扫描件/空内容直接拒绝，避免无效内容入库
+	if h.loaderCfg.MinReadableChars > 0 {
+		if err := precheckReadable(file, parser, info, h.loaderCfg.MinReadableChars); err != nil {
+			Fail(c, CodeBadRequest, err.Error())
+			return
+		}
 	}
 
 	docID := uuid.New().String()
@@ -201,4 +211,21 @@ func (h *handler) deleteDocument(ctx context.Context, doc store.Document) {
 	// 清理磁盘文件
 	_ = os.Remove(doc.FilePath)
 	_ = h.store.DeleteDocument(ctx, doc.ID)
+}
+
+// precheckReadable 上传预检：解析文件并校验可读文本量。
+// 返回 ErrNoReadableContent 等错误时调用方拒绝上传。
+func precheckReadable(file *multipart.FileHeader, parser loader.Parser, info loader.FileInfo, minChars int) error {
+	f, err := file.Open()
+	if err != nil {
+		return fmt.Errorf("读取上传文件失败: %w", err)
+	}
+	defer f.Close()
+
+	result, err := parser.Parse(context.Background(), f, loader.LoadOptions{Mode: loader.ModeStrict})
+	if err != nil {
+		// 解析失败视为无法处理，明确告知用户（tolerant 模式下 parser 也可能返回带 Warnings 的结果）
+		return fmt.Errorf("文件解析失败，内容可能无法识别: %v", err)
+	}
+	return loader.ValidateReadable(result.Document, minChars)
 }

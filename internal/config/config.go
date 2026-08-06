@@ -17,16 +17,25 @@ type Config struct {
 	RAG         RAGConfig         `yaml:"rag"`
 	Postgres    PostgresConfig    `yaml:"postgres"`
 	Server      ServerConfig      `yaml:"server"`
+	Loader      LoaderConfig      `yaml:"loader"`
+}
+
+// LoaderConfig 文档加载器配置
+// MinReadableChars: 全文最低可读文本量（中文+单词计数），低于该值判定为扫描件/空内容拒绝入库；0 表示禁用
+// （阈值语义：默认 20，正常文档动辄数百，扫描件 PDF 图像指令通常 < 15）
+type LoaderConfig struct {
+	MinReadableChars int `yaml:"min_readable_chars"`
 }
 
 // RetrieverConfig 检索器配置
 type RetrieverConfig struct {
-	TopK           int     `yaml:"top_k"`
-	RRFK           int     `yaml:"rrf_k"`
-	VectorWeight   float32 `yaml:"vector_weight"`
-	BM25Weight     float32 `yaml:"bm25_weight"`
-	EnableBM25     bool    `yaml:"enable_bm25"`
-	EnableReranker bool    `yaml:"enable_reranker"`
+	TopK                  int     `yaml:"top_k"`
+	RRFK                  int     `yaml:"rrf_k"`
+	VectorWeight          float32 `yaml:"vector_weight"`
+	BM25Weight            float32 `yaml:"bm25_weight"`
+	EnableBM25            bool    `yaml:"enable_bm25"`
+	EnableReranker        bool    `yaml:"enable_reranker"`
+	MultiQueryConcurrency int     `yaml:"multi_query_concurrency"` // 多路检索并发上限（默认 3）
 }
 
 // RerankerConfig 重排序配置
@@ -81,20 +90,29 @@ type LLMConfig struct {
 
 // RAGConfig RAG 编排配置
 type RAGConfig struct {
-	TopK                int    `yaml:"top_k"`
-	MaxContextTokens    int    `yaml:"max_context_tokens"`
-	MaxChunks           int    `yaml:"max_chunks"`
-	EnableRewrite       *bool  `yaml:"enable_rewrite"`
-	HistoryCapacity     int    `yaml:"history_capacity"`
-	HistoryLimit        int    `yaml:"history_limit"`
-	SystemPromptPath    string `yaml:"system_prompt_path"`
-	ContextTemplatePath string `yaml:"context_template_path"`
-	RewriteTemplatePath string `yaml:"rewrite_template_path"`
+	TopK                   int    `yaml:"top_k"`
+	MaxContextTokens       int    `yaml:"max_context_tokens"`
+	MaxChunks              int    `yaml:"max_chunks"`
+	EnableRewrite          *bool  `yaml:"enable_rewrite"`
+	MultiQueryEnabled      *bool  `yaml:"multi_query_enabled"`
+	MultiQueryCount        int    `yaml:"multi_query_count"`
+	MultiQueryConcurrency  int    `yaml:"multi_query_concurrency"`
+	MultiQueryTemplatePath string `yaml:"multi_query_template_path"`
+	HistoryCapacity        int    `yaml:"history_capacity"`
+	HistoryLimit           int    `yaml:"history_limit"`
+	SystemPromptPath       string `yaml:"system_prompt_path"`
+	ContextTemplatePath    string `yaml:"context_template_path"`
+	RewriteTemplatePath    string `yaml:"rewrite_template_path"`
 }
 
 // RewriteEnabled 是否启用 Query 改写（nil 视为启用，即默认开启）
 func (c RAGConfig) RewriteEnabled() bool {
 	return c.EnableRewrite == nil || *c.EnableRewrite
+}
+
+// MultiQueryOn 是否启用多查询（nil 视为关闭，保守默认保持现状）
+func (c RAGConfig) MultiQueryOn() bool {
+	return c.MultiQueryEnabled != nil && *c.MultiQueryEnabled
 }
 
 // PostgresConfig 元数据存储配置
@@ -178,6 +196,9 @@ func (c *Config) applyDefaults() {
 	if c.Retriever.BM25Weight <= 0 {
 		c.Retriever.BM25Weight = 0.3
 	}
+	if c.Retriever.MultiQueryConcurrency <= 0 {
+		c.Retriever.MultiQueryConcurrency = 3
+	}
 	// Reranker 默认值
 	if c.Reranker.TopN <= 0 {
 		c.Reranker.TopN = 5
@@ -223,6 +244,17 @@ func (c *Config) applyDefaults() {
 	}
 	if c.RAG.HistoryLimit <= 0 {
 		c.RAG.HistoryLimit = 10
+	}
+	// Multi-Query 默认值
+	if c.RAG.MultiQueryCount <= 0 {
+		c.RAG.MultiQueryCount = 3
+	}
+	if c.RAG.MultiQueryConcurrency <= 0 {
+		c.RAG.MultiQueryConcurrency = 3
+	}
+	// Loader 默认值
+	if c.Loader.MinReadableChars == 0 {
+		c.Loader.MinReadableChars = 20
 	}
 	// Server 默认值
 	if c.Server.Port <= 0 {

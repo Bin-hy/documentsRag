@@ -840,3 +840,65 @@ func TestUnifiedResponseShape(t *testing.T) {
 		t.Error("错误响应缺少 message")
 	}
 }
+
+// 扫描件/无可读文本上传：预检拒绝返回 400，不创建文档/任务
+func TestUploadNoReadableContent(t *testing.T) {
+	fs := newFakeStore()
+	fs.keys["key-1"] = store.APIKey{ID: "key-1", Name: "测试", KeyHash: keyHash(testAPIKey), Enabled: true}
+	fe := &fakeEngine{}
+	fv := &fakeVS{}
+	fb := &fakeBM25{}
+	fh := &fakeHistoryStore{msgs: make(map[string][]llm.Message)}
+
+	// 需要预检启用：LoaderCfg.MinReadableChars=20；且 fakeRegistry 能真实解析（用真实 loader）
+	realLoader := loader.NewDefaultRegistry()
+	cfg := config.ServerConfig{
+		Port:            8080,
+		FileStorageDir:  t.TempDir(),
+		UploadMaxSizeMB: 10,
+		WorkerCount:     2,
+		TaskMaxRetries:  3,
+		AuthEnabled:     true,
+	}
+	router := NewRouter(Dependencies{
+		Config:    cfg,
+		LoaderCfg: config.LoaderConfig{MinReadableChars: 20},
+		Store:     fs,
+		VS:        fv,
+		BM25:      fb,
+		Registry:  realLoader, // 真实 registry：txt parser 可用
+		Engine:    fe,
+		History:   fh,
+	})
+
+	// 创建一个知识库（kb_id 必须是 UUID）
+	kbID := "4f2a6d1c-8b9e-4a10-b1c2-d3e4f5a6b7c8"
+	fs.kbs[kbID] = store.KnowledgeBase{ID: kbID, Name: "扫描测试"}
+
+	// 乱码 TXT（无可读文本）
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "scan.txt")
+	fw.Write([]byte("q 595.44 0 0 841.68 cm 1 g /Im10 Do Q\nq 595.44 0 0 841.68 cm 1 g /Im11 Do Q"))
+	mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/documents/upload?kb_id="+kbID, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("扫描件应 400，实际 %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "无可读文本") {
+		t.Errorf("错误信息应含「无可读文本」: %s", w.Body.String())
+	}
+	// 不应创建文档
+	fs.mu.Lock()
+	docCount := len(fs.docs)
+	fs.mu.Unlock()
+	if docCount != 0 {
+		t.Errorf("拒绝后不应创建文档记录，实际 %d 条", docCount)
+	}
+}

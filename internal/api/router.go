@@ -23,24 +23,26 @@ import (
 
 // Dependencies API 层依赖集合
 type Dependencies struct {
-	Config   config.ServerConfig
-	Store    store.Store
-	VS       vectorstore.VectorStore
-	BM25     retriever.BM25Index
-	Registry loader.Registry
-	Engine   rag.Engine
-	History  store.HistoryStore
+	Config    config.ServerConfig
+	LoaderCfg config.LoaderConfig
+	Store     store.Store
+	VS        vectorstore.VectorStore
+	BM25      retriever.BM25Index
+	Registry  loader.Registry
+	Engine    rag.Engine
+	History   store.HistoryStore
 }
 
 // handler HTTP handler 集合
 type handler struct {
-	cfg      config.ServerConfig
-	store    store.Store
-	vs       vectorstore.VectorStore
-	bm25     retriever.BM25Index
-	registry loader.Registry
-	engine   rag.Engine
-	history  store.HistoryStore
+	cfg       config.ServerConfig
+	loaderCfg config.LoaderConfig
+	store     store.Store
+	vs        vectorstore.VectorStore
+	bm25      retriever.BM25Index
+	registry  loader.Registry
+	engine    rag.Engine
+	history   store.HistoryStore
 }
 
 // NewRouter 创建 Gin 路由
@@ -50,13 +52,14 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	r.Use(Logger(), CORS(), RateLimit(deps.Config.RateLimitQPS))
 
 	h := &handler{
-		cfg:      deps.Config,
-		store:    deps.Store,
-		vs:       deps.VS,
-		bm25:     deps.BM25,
-		registry: deps.Registry,
-		engine:   deps.Engine,
-		history:  deps.History,
+		cfg:       deps.Config,
+		loaderCfg: deps.LoaderCfg,
+		store:     deps.Store,
+		vs:        deps.VS,
+		bm25:      deps.BM25,
+		registry:  deps.Registry,
+		engine:    deps.Engine,
+		history:   deps.History,
 	}
 
 	// Swagger 文档（公开访问，接口实测仍需 API Key）

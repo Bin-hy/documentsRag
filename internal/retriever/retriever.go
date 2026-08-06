@@ -3,6 +3,7 @@ package retriever
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
@@ -14,6 +15,8 @@ import (
 // Retriever 检索接口
 type Retriever interface {
 	Search(ctx context.Context, req RetrieveRequest) ([]RetrieveResult, error)
+	// SearchMulti 多查询检索：多路并行 Search，跨路 RRF 融合为 Top-K
+	SearchMulti(ctx context.Context, req RetrieveRequest, queries []string) ([]RetrieveResult, error)
 }
 
 type defaultRetriever struct {
@@ -162,4 +165,75 @@ func (r *defaultRetriever) vectorSearch(ctx context.Context, query string, topK 
 	}
 
 	return results, nil
+}
+
+// SearchMulti 多查询检索：每路并行 Search（向量+BM25 内部 RRF），
+// 跨路用 FuseMultiQuery（RRF）融合为 Top-K。单路失败忽略（warn），全部失败返回 error。
+func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest, queries []string) ([]RetrieveResult, error) {
+	if len(queries) == 0 {
+		return nil, fmt.Errorf("多查询检索：查询列表为空")
+	}
+
+	concurrency := r.config.MultiQueryConcurrency
+	if concurrency <= 0 {
+		concurrency = 3
+	}
+
+	results := make([][]RetrieveResult, len(queries))
+	errgroupCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var firstErr error
+
+	for i, q := range queries {
+		i, q := i, q
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-errgroupCtx.Done():
+				return
+			}
+			defer func() { <-sem }()
+
+			out, err := r.Search(ctx, RetrieveRequest{Query: q, TopK: req.TopK, Filter: req.Filter})
+			if err != nil {
+				mu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				mu.Unlock()
+				slog.Warn("多路检索单路失败，忽略该路", "query", q, "err", err)
+				return
+			}
+			results[i] = out
+		}()
+	}
+	wg.Wait()
+
+	// 全部失败才返回错误；至少一路成功即可
+	valid := 0
+	for _, res := range results {
+		if len(res) > 0 {
+			valid++
+		}
+	}
+	if valid == 0 {
+		if firstErr != nil {
+			return nil, fmt.Errorf("多路检索全部失败: %w", firstErr)
+		}
+		return nil, nil
+	}
+
+	topK := req.TopK
+	if topK <= 0 {
+		topK = r.config.TopK
+	}
+	fused := FuseMultiQuery(results, 60, topK)
+	slog.Info("多路检索完成", "路数", len(queries), "有效路", valid, "融合数", len(fused))
+	return fused, nil
 }

@@ -28,3 +28,15 @@ func (e *ErrParseFailed) Error() string {
 func (e *ErrParseFailed) Unwrap() error {
 	return e.Cause
 }
+
+// ErrNoReadableContent 文档无可读文本（扫描件/空文件/纯乱码），拒绝入库
+type ErrNoReadableContent struct {
+	Format   string // 文件格式（pdf/txt/...）
+	Readable int    // 实际可读字符数
+	MinChars int    // 最低阈值
+}
+
+func (e *ErrNoReadableContent) Error() string {
+	return fmt.Sprintf("文档无可读文本（扫描件或内容为空），可读字符 %d/最低 %d，不支持解析入库",
+		e.Readable, e.MinChars)
+}

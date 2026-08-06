@@ -93,6 +93,7 @@ func New(cfg *config.Config) (*App, error) {
 			ChunkOverlap: cfg.Chunker.ChunkOverlap,
 			HeadingLevel: cfg.Chunker.HeadingLevel,
 		},
+		cfg.Loader,
 		bm25,
 	)
 
@@ -108,13 +109,14 @@ func New(cfg *config.Config) (*App, error) {
 
 	// HTTP 路由（API + 前端静态托管）
 	router := api.NewRouter(api.Dependencies{
-		Config:   cfg.Server,
-		Store:    st,
-		VS:       vs,
-		BM25:     bm25,
-		Registry: loader.NewDefaultRegistry(),
-		Engine:   engine,
-		History:  st.HistoryStore(),
+		Config:    cfg.Server,
+		LoaderCfg: cfg.Loader,
+		Store:     st,
+		VS:        vs,
+		BM25:      bm25,
+		Registry:  loader.NewDefaultRegistry(),
+		Engine:    engine,
+		History:   st.HistoryStore(),
 	})
 	if err := webui.Register(router); err != nil {
 		cancel()

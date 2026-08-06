@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/Bin-hy/bin-rag/internal/chunker"
+	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/loader"
 	"github.com/Bin-hy/bin-rag/internal/retriever"
@@ -32,6 +33,7 @@ type defaultPipeline struct {
 	embedder    embedding.Embedder
 	vectorstore vectorstore.VectorStore
 	chunkConfig chunker.ChunkerConfig
+	loaderCfg   config.LoaderConfig
 	bm25Index   retriever.BM25Index
 }
 
@@ -42,6 +44,7 @@ func NewPipeline(
 	emb embedding.Embedder,
 	vs vectorstore.VectorStore,
 	cfg chunker.ChunkerConfig,
+	lc config.LoaderConfig,
 	bm25 retriever.BM25Index,
 ) Pipeline {
 	return &defaultPipeline{
@@ -50,6 +53,7 @@ func NewPipeline(
 		embedder:    emb,
 		vectorstore: vs,
 		chunkConfig: cfg,
+		loaderCfg:   lc,
 		bm25Index:   bm25,
 	}
 }
@@ -62,8 +66,16 @@ func (p *defaultPipeline) Ingest(ctx context.Context, req IngestRequest) ([]stri
 		return nil, fmt.Errorf("加载文档失败: %w", err)
 	}
 
+	// 可读文本校验（扫描件/空内容拒绝入库，防止污染知识库）
 	if result.Document == nil || len(result.Document.Blocks) == 0 {
-		return nil, nil
+		return nil, &loader.ErrNoReadableContent{
+			Format:   req.Info.Filename,
+			Readable: 0,
+			MinChars: p.loaderCfg.MinReadableChars,
+		}
+	}
+	if err := loader.ValidateReadable(result.Document, p.loaderCfg.MinReadableChars); err != nil {
+		return nil, err
 	}
 
 	// Chunk

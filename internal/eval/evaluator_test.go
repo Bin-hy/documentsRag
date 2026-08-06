@@ -30,6 +30,16 @@ func (f *fakeRetriever) Search(ctx context.Context, req retriever.RetrieveReques
 	return f.results, nil
 }
 
+func (f *fakeRetriever) SearchMulti(ctx context.Context, req retriever.RetrieveRequest, queries []string) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.callLog = append(f.callLog, queries...)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.results, nil
+}
+
 // fakeEngine 返回固定回答与来源
 type fakeEngine struct {
 	answer  string

@@ -398,3 +398,56 @@ func TestRetrieverRerankFailDegrades(t *testing.T) {
 		t.Fatal("降级后应返回融合结果")
 	}
 }
+
+// 多路查询 RRF 融合：交集文档靠前、去重、topK 截断
+func TestFuseMultiQuery(t *testing.T) {
+	t.Run("两路交集文档靠前", func(t *testing.T) {
+		list1 := []RetrieveResult{{ID: "a", Content: "A"}, {ID: "b", Content: "B"}, {ID: "c", Content: "C"}}
+		list2 := []RetrieveResult{{ID: "b", Content: "B"}, {ID: "d", Content: "D"}}
+
+		out := FuseMultiQuery([][]RetrieveResult{list1, list2}, 60, 10)
+
+		if len(out) != 4 {
+			t.Fatalf("融合结果应为 4 条（去重），实际 %d", len(out))
+		}
+		// b 在两路出现（rank0+rank0），分数最高
+		if out[0].ID != "b" {
+			t.Errorf("交集文档 b 应排第一，实际 %s", out[0].ID)
+		}
+		// 无重复 ID
+		seen := map[string]bool{}
+		for _, r := range out {
+			if seen[r.ID] {
+				t.Errorf("出现重复 ID: %s", r.ID)
+			}
+			seen[r.ID] = true
+		}
+	})
+
+	t.Run("三路无交集按 rank 融合", func(t *testing.T) {
+		l1 := []RetrieveResult{{ID: "a"}, {ID: "b"}}
+		l2 := []RetrieveResult{{ID: "c"}, {ID: "d"}}
+		l3 := []RetrieveResult{{ID: "e"}}
+
+		out := FuseMultiQuery([][]RetrieveResult{l1, l2, l3}, 60, 10)
+		if len(out) != 5 {
+			t.Fatalf("应为 5 条，实际 %d", len(out))
+		}
+	})
+
+	t.Run("topK 截断", func(t *testing.T) {
+		l1 := []RetrieveResult{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+		out := FuseMultiQuery([][]RetrieveResult{l1}, 60, 2)
+		if len(out) != 2 {
+			t.Fatalf("topK=2 应返回 2 条，实际 %d", len(out))
+		}
+	})
+
+	t.Run("内容信息保留", func(t *testing.T) {
+		l1 := []RetrieveResult{{ID: "a", Content: "完整内容", Metadata: map[string]any{"kb_id": "k1"}}}
+		out := FuseMultiQuery([][]RetrieveResult{l1}, 60, 5)
+		if out[0].Content != "完整内容" {
+			t.Errorf("Content 应保留，实际 %q", out[0].Content)
+		}
+	})
+}

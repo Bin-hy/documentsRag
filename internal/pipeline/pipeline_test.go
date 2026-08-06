@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Bin-hy/bin-rag/internal/chunker"
+	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/loader"
 	"github.com/Bin-hy/bin-rag/internal/vectorstore"
 )
@@ -70,10 +71,11 @@ func TestIngestSuccess(t *testing.T) {
 			Strategy:  chunker.StrategyRecursive,
 			ChunkSize: 500,
 		},
+		config.LoaderConfig{MinReadableChars: 20},
 		nil,
 	)
 
-	input := "# 标题\n\n这是正文段落。\n\n## 二级标题\n\n这是第二段内容。"
+	input := "# 标题\n\n这是正文段落，描述系统的功能特性与设计目标。\n\n## 二级标题\n\n这是第二段内容，包含更多说明文字用于测试。"
 	reader := strings.NewReader(input)
 	info := loader.FileInfo{Filename: "test.md", Size: int64(len(input))}
 
@@ -132,6 +134,7 @@ func TestIngestEmbedError(t *testing.T) {
 		emb,
 		vs,
 		chunker.ChunkerConfig{Strategy: chunker.StrategyRecursive, ChunkSize: 500},
+		config.LoaderConfig{MinReadableChars: 20},
 		nil,
 	)
 
@@ -157,6 +160,7 @@ func TestIngestUpsertError(t *testing.T) {
 		emb,
 		vs,
 		chunker.ChunkerConfig{Strategy: chunker.StrategyRecursive, ChunkSize: 500},
+		config.LoaderConfig{MinReadableChars: 20},
 		nil,
 	)
 
@@ -174,3 +178,38 @@ func TestIngestUpsertError(t *testing.T) {
 
 // 确保 mockVectorStore 实现了 io.Closer（如果有）
 var _ io.Closer = (*mockVectorStore)(nil)
+
+// 扫描件/空内容：无可读文本时 Ingest 返回错误，不调用 embedder 与 vectorstore
+func TestIngestNoReadableContent(t *testing.T) {
+	emb := &mockEmbedder{dim: 4}
+	vs := &mockVectorStore{}
+
+	p := NewPipeline(
+		loader.NewLoader(),
+		chunker.NewChunker(nil),
+		emb,
+		vs,
+		chunker.ChunkerConfig{Strategy: chunker.StrategyRecursive, ChunkSize: 500},
+		config.LoaderConfig{MinReadableChars: 20},
+		nil,
+	)
+
+	// 纯乱码/图像指令文本（无可读文本）
+	input := "q 595.44 0 0 841.68 0.00 0.00 cm 1 g /Im10 Do Q"
+	_, err := p.Ingest(context.Background(), IngestRequest{
+		KBID:       "kb-1",
+		DocumentID: "doc-1",
+		Reader:     strings.NewReader(input),
+		Info:       loader.FileInfo{Filename: "scan.pdf"},
+	})
+	if err == nil {
+		t.Fatal("无可读文本应返回 error")
+	}
+	var nerr *loader.ErrNoReadableContent
+	if !errors.As(err, &nerr) {
+		t.Fatalf("错误类型应为 ErrNoReadableContent，实际 %T", err)
+	}
+	if len(vs.records) != 0 {
+		t.Errorf("拒绝后不应写入向量库，实际 %d 条", len(vs.records))
+	}
+}

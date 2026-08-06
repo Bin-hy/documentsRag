@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -182,9 +183,58 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		return nil, nil, fmt.Errorf("读取对话历史失败: %w", err)
 	}
 
-	// Query 改写（失败降级用原问题）
+	// Query 改写 / 多查询（多查询启用时替代单查询改写）
 	query := question
-	if e.cfg.RewriteEnabled() {
+	if e.cfg.MultiQueryOn() {
+		// 多查询路径：生成变体 → 多路检索
+		multiStart := time.Now()
+		queries, err := e.multiQuery(ctx, history, question)
+		if err != nil {
+			slog.Warn("多查询生成失败，降级单查询", "err", err)
+			// 降级：走现有单查询改写路径
+			if e.cfg.RewriteEnabled() {
+				rewritten, rerr := e.rewriteQuery(ctx, history, question)
+				if rerr != nil {
+					slog.Warn("Query 改写失败，降级使用原问题", "err", rerr)
+				} else {
+					query = rewritten
+					slog.Info("Query 改写完成", "原问题", question, "改写后", query,
+						"耗时ms", time.Since(multiStart).Milliseconds())
+				}
+			}
+		} else {
+			slog.Info("多查询生成完成", "变体数", len(queries), "变体", queries,
+				"耗时ms", time.Since(multiStart).Milliseconds())
+			// 多路检索
+			retrieveStart := time.Now()
+			chunks, err := e.retriever.SearchMulti(ctx, retriever.RetrieveRequest{
+				Query:  query,
+				TopK:   e.cfg.TopK,
+				Filter: kbFilter(o.KBID),
+			}, queries)
+			if err != nil {
+				return nil, nil, fmt.Errorf("多路检索失败: %w", err)
+			}
+			slog.Info("检索完成", "检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
+
+			// 上下文组装
+			items, sources := buildContext(chunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
+			contextText, err := renderContext(items, e.templates.context)
+			if err != nil {
+				return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
+			}
+			slog.Info("上下文组装完成", "上下文token", estimateTokens(contextText), "引用数", len(sources))
+
+			// 组装 messages：system + 历史 + user（上下文 + 原始问题）
+			messages := make([]llm.Message, 0, 2+len(history))
+			messages = append(messages, llm.Message{Role: llm.RoleSystem, Content: e.templates.system})
+			messages = append(messages, history...)
+			userContent := contextText + "\n\n用户问题：" + question
+			messages = append(messages, llm.Message{Role: llm.RoleUser, Content: userContent})
+
+			return messages, sources, nil
+		}
+	} else if e.cfg.RewriteEnabled() {
 		rewriteStart := time.Now()
 		rewritten, err := e.rewriteQuery(ctx, history, question)
 		if err != nil {
@@ -254,6 +304,49 @@ func kbFilter(kbID string) map[string]any {
 		return nil
 	}
 	return map[string]any{"kb_id": kbID}
+}
+
+// multiQuery 调用 LLM 生成多查询变体（JSON 数组），返回 [原问题] + 变体。
+// 解析失败返回 error（调用方降级单查询）。
+func (e *RAGEngine) multiQuery(ctx context.Context, history []llm.Message, question string) ([]string, error) {
+	count := e.cfg.MultiQueryCount
+	if count <= 0 {
+		count = 3
+	}
+	prompt, err := renderMultiQuery(history, question, count, e.templates.multiQuery)
+	if err != nil {
+		return nil, fmt.Errorf("渲染多查询提示失败: %w", err)
+	}
+
+	out, err := e.llm.Generate(ctx,
+		[]llm.Message{{Role: llm.RoleUser, Content: prompt}},
+		llm.WithTemperature(0.1),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("生成多查询变体失败: %w", err)
+	}
+
+	var variants []string
+	if err := json.Unmarshal([]byte(out), &variants); err != nil {
+		return nil, fmt.Errorf("解析多查询变体失败（非 JSON 数组）: %w", err)
+	}
+	// 过滤空串，去重，限制数量
+	seen := make(map[string]bool, len(variants)+1)
+	queries := make([]string, 0, len(variants)+1)
+	queries = append(queries, question)
+	seen[question] = true
+	for _, v := range variants {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		queries = append(queries, v)
+	}
+	if len(queries) <= 1 {
+		return nil, fmt.Errorf("多查询变体为空")
+	}
+	return queries, nil
 }
 
 // sendEvent 发送事件；ctx 取消时返回 false

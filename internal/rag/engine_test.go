@@ -2,6 +2,7 @@ package rag
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,6 +53,22 @@ func (f *fakeRetriever) Search(ctx context.Context, req retriever.RetrieveReques
 	f.queries = append(f.queries, req.Query)
 	f.mu.Unlock()
 	return f.searchFunc(ctx, req)
+}
+
+func (f *fakeRetriever) SearchMulti(ctx context.Context, req retriever.RetrieveRequest, queries []string) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	f.queries = append(f.queries, queries...)
+	f.mu.Unlock()
+	// 模拟多路检索：每路都返回相同结果（简化）
+	var out []retriever.RetrieveResult
+	for range queries {
+		res, err := f.searchFunc(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, res...)
+	}
+	return out, nil
 }
 
 // 测试用 RAG 配置（EnableRewrite 为 nil，RewriteEnabled() 默认 true）
@@ -458,5 +475,121 @@ func TestStreamAsk_ContextCancel(t *testing.T) {
 	hist, _ := hs.Get("s1", 0)
 	if len(hist) != 0 {
 		t.Errorf("ctx 取消后不应落历史: %+v", hist)
+	}
+}
+
+// Multi-Query 启用：生成变体 JSON → 调 SearchMulti → 回答正常
+func TestAsk_MultiQueryEnabled(t *testing.T) {
+	cfg := testRAGConfig()
+	enabled := true
+	cfg.MultiQueryEnabled = &enabled
+	cfg.MultiQueryCount = 2
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, messages []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				// 第一次：多查询变体生成
+				return `["问题变体一","问题变体二"]`, nil
+			}
+			return "多查询回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "原始问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if res.Answer != "多查询回答" {
+		t.Errorf("回答错误: %q", res.Answer)
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	// 原问题 + 2 变体 = 3 路
+	if len(ft.queries) != 3 {
+		t.Errorf("应检索 3 路（原问题+2变体），实际 %d: %v", len(ft.queries), ft.queries)
+	}
+	if ft.queries[0] != "原始问题" {
+		t.Errorf("第一路应为原问题: %v", ft.queries)
+	}
+}
+
+// Multi-Query 变体生成失败：降级单查询，问答不报错
+func TestAsk_MultiQueryFallback(t *testing.T) {
+	cfg := testRAGConfig()
+	enabled := true
+	cfg.MultiQueryEnabled = &enabled
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls <= 2 {
+				// 多查询变体生成 + 改写降级均失败
+				return "", errors.New("LLM 不可用")
+			}
+			return "降级回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	res, err := engine.Ask(context.Background(), "s1", "原始问题")
+	if err != nil {
+		t.Fatalf("多查询失败应降级而非报错: %v", err)
+	}
+	if res.Answer != "降级回答" {
+		t.Errorf("降级回答错误: %q", res.Answer)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) == 0 {
+		t.Errorf("降级后应至少检索一次")
+	}
+	if len(ft.queries) > 1 {
+		t.Errorf("降级后应走单查询（1 路），实际 %d 路: %v", len(ft.queries), ft.queries)
+	}
+}
+
+// Multi-Query 关闭：走现有单查询路径
+func TestAsk_MultiQueryDisabled(t *testing.T) {
+	cfg := testRAGConfig()
+	// MultiQueryEnabled 为 nil（默认关闭）
+
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "单查询回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs)
+
+	if _, err := engine.Ask(context.Background(), "s1", "原问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if len(ft.queries) != 1 {
+		t.Errorf("关闭多查询应单路检索，实际 %d: %v", len(ft.queries), ft.queries)
 	}
 }

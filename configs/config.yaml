@@ -30,6 +30,12 @@ vectorstore:
   # 距离度量：cosine / euclid / dot
   distance: "cosine"
 
+# 文档加载器配置
+loader:
+  # 全文最低可读文本量（中文+单词计数），低于该值判定为扫描件/空内容拒绝入库；0 禁用
+  # 默认 20：正常文档动辄数百，扫描件 PDF 图像指令通常 < 15
+  min_readable_chars: 20
+
 # 分块器配置
 chunker:
   # 策略：fixed / recursive / heading
@@ -103,6 +109,12 @@ rag:
   max_chunks: 5
   # 是否启用 Query 改写（不配置默认启用）
   enable_rewrite: true
+  # 是否启用 Multi-Query 多查询（false/不配置 = 单查询；true = 生成多路变体并行检索 + RRF 融合）
+  multi_query_enabled: false
+  # 多查询变体数量（默认 3）
+  multi_query_count: 3
+  # 多路检索并发上限（默认 3）
+  multi_query_concurrency: 3
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数
