@@ -191,8 +191,8 @@ func TestAsk_FullChain(t *testing.T) {
 // AC5: 改写请求携带对话历史上下文
 func TestAsk_RewriteReceivesHistory(t *testing.T) {
 	hs := NewMemoryHistoryStore(50)
-	_ = hs.Append("s1", llm.RoleUser, "RAG 是什么？")
-	_ = hs.Append("s1", llm.RoleAssistant, "RAG 是检索增强生成。")
+	_ = hs.Append("s1", llm.RoleUser, "RAG 是什么？", "")
+	_ = hs.Append("s1", llm.RoleAssistant, "RAG 是检索增强生成。", "")
 
 	var rewriteMessages []llm.Message
 	fl := &fakeLLM{

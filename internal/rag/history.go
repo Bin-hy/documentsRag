@@ -8,8 +8,8 @@ import (
 
 // HistoryStore 对话历史存储接口（数据库实现留待阶段七）
 type HistoryStore interface {
-	Append(sessionID string, role string, content string) error
-	Get(sessionID string, limit int) ([]llm.Message, error) // 返回最近 limit 条
+	Append(sessionID string, role string, content string, sources string) error // sources = 引用来源 JSON 字符串
+	Get(sessionID string, limit int) ([]llm.Message, error)                     // 返回最近 limit 条
 	Clear(sessionID string) error
 }
 
@@ -32,12 +32,12 @@ func NewMemoryHistoryStore(capacity int) HistoryStore {
 }
 
 // Append 追加消息，超出容量时丢弃最旧消息
-func (s *memoryHistoryStore) Append(sessionID string, role string, content string) error {
+func (s *memoryHistoryStore) Append(sessionID string, role string, content string, sources string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	msgs := s.sessions[sessionID]
-	msgs = append(msgs, llm.Message{Role: role, Content: content})
+	msgs = append(msgs, llm.Message{Role: role, Content: content, Sources: sources})
 
 	if len(msgs) > s.capacity {
 		overflow := len(msgs) - s.capacity

@@ -21,15 +21,20 @@ import (
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
+// EngineProvider 返回当前引擎（配置热重载后新请求用新引擎）
+type EngineProvider func() rag.Engine
+
 // Dependencies API 层依赖集合
 type Dependencies struct {
 	Config    config.ServerConfig
 	LoaderCfg config.LoaderConfig
+	CfgMgr    *config.ConfigManager      // 配置管理器（热重载 + 快照）
+	Rebuild   func(*config.Config) error // 配置更新时的运行时组件重建回调（app 装配传入）
+	Engine    EngineProvider             // 当前引擎（可热重载）
 	Store     store.Store
 	VS        vectorstore.VectorStore
 	BM25      retriever.BM25Index
 	Registry  loader.Registry
-	Engine    rag.Engine
 	History   store.HistoryStore
 }
 
@@ -37,11 +42,13 @@ type Dependencies struct {
 type handler struct {
 	cfg       config.ServerConfig
 	loaderCfg config.LoaderConfig
+	cfgMgr    *config.ConfigManager
+	rebuild   func(*config.Config) error
+	engine    EngineProvider
 	store     store.Store
 	vs        vectorstore.VectorStore
 	bm25      retriever.BM25Index
 	registry  loader.Registry
-	engine    rag.Engine
 	history   store.HistoryStore
 }
 
@@ -54,11 +61,13 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	h := &handler{
 		cfg:       deps.Config,
 		loaderCfg: deps.LoaderCfg,
+		cfgMgr:    deps.CfgMgr,
+		rebuild:   deps.Rebuild,
+		engine:    deps.Engine,
 		store:     deps.Store,
 		vs:        deps.VS,
 		bm25:      deps.BM25,
 		registry:  deps.Registry,
-		engine:    deps.Engine,
 		history:   deps.History,
 	}
 
@@ -66,7 +75,11 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	v1 := r.Group("/api/v1")
-	v1.Use(Auth(deps.Store, deps.Config.AuthEnabled))
+	v1.Use(Auth(deps.Store, deps.Config.AuthEnabled, deps.Config.BootstrapAPIKey))
+
+	// 配置管理（GET 任意 Key；PUT 需 bootstrap Key）
+	v1.GET("/config", h.GetConfig)
+	v1.PUT("/config", h.UpdateConfig)
 
 	// 知识库
 	v1.POST("/knowledge-bases", h.CreateKB)
@@ -87,6 +100,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	// 问答（stream=1 或 Accept: text/event-stream 时 SSE 流式）
 	v1.POST("/chat", h.ChatDispatch)
 	v1.GET("/chat/history", h.GetHistory)
+	v1.GET("/chunks/:id", h.GetChunk)
 
 	// API Key 管理
 	v1.POST("/api-keys", h.CreateAPIKey)

@@ -14,8 +14,9 @@ import (
 )
 
 // Auth API Key 认证中间件（Authorization: Bearer <key>）
-// enabled 为 false 时放行（本地开发用）
-func Auth(s store.Store, enabled bool) gin.HandlerFunc {
+// enabled 为 false 时放行（本地开发用）；bootstrapKey 非空时，命中该 Key 的请求标记为
+// context["is_bootstrap"]=true（用于配置修改等高权限操作）
+func Auth(s store.Store, enabled bool, bootstrapKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !enabled {
 			c.Next()
@@ -52,6 +53,7 @@ func Auth(s store.Store, enabled bool) gin.HandlerFunc {
 
 		_ = s.TouchAPIKey(ctx, key.ID)
 		c.Set("api_key_id", key.ID)
+		c.Set("is_bootstrap", bootstrapKey != "" && token == bootstrapKey)
 		c.Next()
 	}
 }

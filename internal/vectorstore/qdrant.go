@@ -164,6 +164,26 @@ func (s *qdrantStore) Delete(ctx context.Context, ids []string) error {
 	return nil
 }
 
+// Get 按 ID 取单个点 payload（引用来源查看 chunk 原文用）
+func (s *qdrantStore) Get(ctx context.Context, id string) (map[string]any, bool, error) {
+	points, err := s.client.Get(ctx, &pb.GetPoints{
+		CollectionName: s.config.CollectionName,
+		Ids:            []*pb.PointId{pb.NewID(id)},
+		WithPayload:    &pb.WithPayloadSelector{SelectorOptions: &pb.WithPayloadSelector_Enable{Enable: true}},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("Get 失败: %w", err)
+	}
+	if len(points) == 0 {
+		return nil, false, nil
+	}
+	payload := make(map[string]any, len(points[0].Payload))
+	for k, v := range points[0].Payload {
+		payload[k] = fromQdrantValue(v)
+	}
+	return payload, true, nil
+}
+
 func (s *qdrantStore) Close() error {
 	return s.client.Close()
 }

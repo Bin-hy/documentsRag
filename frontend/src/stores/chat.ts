@@ -13,12 +13,22 @@ export interface LocalMessage {
   error?: boolean
 }
 
+// parseSources 解析历史持久化的引用来源 JSON 字符串为数组；空/非法返回 []
+function parseSources(raw?: string): ChatSource[] {
+  if (!raw) return []
+  try {
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? (arr as ChatSource[]) : []
+  } catch {
+    return []
+  }
+}
+
 function loadSessions(): SessionMeta[] {
   try {
     return JSON.parse(localStorage.getItem(SESSIONS_STORAGE) ?? '[]') as SessionMeta[]
   } catch {
-    return []
-  }
+    return []  }
 }
 
 function saveSessions(sessions: SessionMeta[]) {
@@ -67,11 +77,13 @@ export const useChatStore = defineStore('chat', {
         })
         if (resp.ok) {
           const body = await resp.json()
-          const msgs = body?.data as Array<{ role: string; content: string }> | undefined
+          const msgs = body?.data as Array<{ role: string; content: string; sources?: string }> | undefined
           if (Array.isArray(msgs)) {
             this.messages = msgs.map((m) => ({
               role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
               content: m.content,
+              // sources 是历史持久化的 JSON 字符串，解析为数组；解析失败为空
+              sources: parseSources(m.sources),
             }))
           }
         }

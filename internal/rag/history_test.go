@@ -12,7 +12,7 @@ func TestHistoryStore_CapacityEvictsOldest(t *testing.T) {
 	hs := NewMemoryHistoryStore(3)
 
 	for i := 1; i <= 4; i++ {
-		if err := hs.Append("s1", llm.RoleUser, string(rune('0'+i))); err != nil {
+		if err := hs.Append("s1", llm.RoleUser, string(rune('0'+i)), ""); err != nil {
 			t.Fatalf("Append 失败: %v", err)
 		}
 	}
@@ -35,7 +35,7 @@ func TestHistoryStore_GetLimit(t *testing.T) {
 	hs := NewMemoryHistoryStore(50)
 
 	for i := 1; i <= 5; i++ {
-		_ = hs.Append("s1", llm.RoleUser, string(rune('0'+i)))
+		_ = hs.Append("s1", llm.RoleUser, string(rune('0'+i)), "")
 	}
 
 	msgs, err := hs.Get("s1", 3)
@@ -53,8 +53,8 @@ func TestHistoryStore_GetLimit(t *testing.T) {
 // AC9: 不同 session 隔离；Clear 清空
 func TestHistoryStore_SessionIsolation(t *testing.T) {
 	hs := NewMemoryHistoryStore(10)
-	_ = hs.Append("s1", llm.RoleUser, "a")
-	_ = hs.Append("s2", llm.RoleUser, "b")
+	_ = hs.Append("s1", llm.RoleUser, "a", "")
+	_ = hs.Append("s2", llm.RoleUser, "b", "")
 
 	s1, _ := hs.Get("s1", 0)
 	s2, _ := hs.Get("s2", 0)
@@ -80,7 +80,7 @@ func TestHistoryStore_Concurrent(t *testing.T) {
 			defer wg.Done()
 			session := "s" + string(rune('A'+g))
 			for i := 0; i < 50; i++ {
-				_ = hs.Append(session, llm.RoleUser, "msg")
+				_ = hs.Append(session, llm.RoleUser, "msg", "")
 				_, _ = hs.Get(session, 5)
 			}
 		}(g)

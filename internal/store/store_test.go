@@ -150,11 +150,11 @@ func TestPostgresHistory_Get(t *testing.T) {
 	h := &PostgresHistoryStore{pool: mock}
 
 	// 子查询 DESC 取最近 2 条后外层 ASC 排序
-	rows := pgxmock.NewRows([]string{"role", "content"}).
-		AddRow("user", "第二个问题").
-		AddRow("assistant", "第二个回答")
+	rows := pgxmock.NewRows([]string{"role", "content", "sources"}).
+		AddRow("user", "第二个问题", "").
+		AddRow("assistant", "第二个回答", `[{"id":"c1","filename":"a.md"}]`)
 
-	mock.ExpectQuery("SELECT role, content").
+	mock.ExpectQuery("SELECT role, content, sources").
 		WithArgs("sess-1", 2).
 		WillReturnRows(rows)
 

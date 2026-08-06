@@ -139,7 +139,7 @@ func (e *RAGEngine) tryMultiQuery(ctx context.Context, sessionID string, questio
 		return nil, false, fmt.Errorf("生成失败: %w", err)
 	}
 
-	e.appendHistory(sessionID, llm.RoleUser, question)
-	e.appendHistory(sessionID, llm.RoleAssistant, answer)
+	e.appendHistory(sessionID, llm.RoleUser, question, "")
+	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
 	return &RAGResult{Answer: answer, Sources: sources}, true, nil
 }

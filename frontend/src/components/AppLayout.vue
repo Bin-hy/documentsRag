@@ -2,7 +2,7 @@
 // 主布局：左侧导航 + 顶栏 + 内容区
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ChatDotRound, Collection, Key } from '@element-plus/icons-vue'
+import { ChatDotRound, Collection, Key, Setting } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -55,6 +55,10 @@ if (localStorage.getItem('binrag_theme') === 'dark') {
         <el-menu-item index="/keys">
           <el-icon><Key /></el-icon>
           <span>API Key</span>
+        </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>系统配置</span>
         </el-menu-item>
       </el-menu>
     </el-aside>

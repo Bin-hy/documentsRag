@@ -259,6 +259,10 @@ func (f *fakeVS) Delete(ctx context.Context, ids []string) error {
 	f.deleted = append(f.deleted, ids)
 	return nil
 }
+func (f *fakeVS) Get(ctx context.Context, id string) (map[string]any, bool, error) {
+	// 测试中不构造实际点数据；chunks 接口测试用专门构造
+	return nil, false, nil
+}
 func (f *fakeVS) EnsureCollection(ctx context.Context) error { return nil }
 func (f *fakeVS) Close() error                               { return nil }
 
@@ -302,10 +306,10 @@ type fakeHistoryStore struct {
 	msgs map[string][]llm.Message
 }
 
-func (f *fakeHistoryStore) Append(ctx context.Context, sessionID string, role string, content string) error {
+func (f *fakeHistoryStore) Append(ctx context.Context, sessionID string, role string, content string, sources string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.msgs[sessionID] = append(f.msgs[sessionID], llm.Message{Role: role, Content: content})
+	f.msgs[sessionID] = append(f.msgs[sessionID], llm.Message{Role: role, Content: content, Sources: sources})
 	return nil
 }
 
@@ -373,7 +377,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		VS:       fv,
 		BM25:     fb,
 		Registry: reg,
-		Engine:   fe,
+		Engine:   func() rag.Engine { return fe },
 		History:  fh,
 	})
 
@@ -867,7 +871,7 @@ func TestUploadNoReadableContent(t *testing.T) {
 		VS:        fv,
 		BM25:      fb,
 		Registry:  realLoader, // 真实 registry：txt parser 可用
-		Engine:    fe,
+		Engine:    func() rag.Engine { return fe },
 		History:   fh,
 	})
 
@@ -920,5 +924,103 @@ func TestChatRequestStrategyOverride(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "event:chunk") {
 		t.Errorf("缺少 chunk 事件:\n%s", w.Body.String())
+	}
+}
+
+// 配置管理测试环境：带 cfgMgr + bootstrap key
+func newConfigTestEnv(t *testing.T) (*testEnv, string) {
+	t.Helper()
+
+	fs := newFakeStore()
+	fs.keys["key-1"] = store.APIKey{ID: "key-1", Name: "测试", KeyHash: keyHash(testAPIKey), Enabled: true}
+	// bootstrap key 也作为合法 key
+	fs.keys["key-boot"] = store.APIKey{ID: "key-boot", Name: "bootstrap", KeyHash: keyHash(testBootstrapKey), Enabled: true}
+
+	fe := &fakeEngine{answer: "配置测试回答", sources: []rag.Source{{ID: "r1", Filename: "a.md", Score: 0.9}}}
+	fv := &fakeVS{}
+	fb := &fakeBM25{}
+	reg := &fakeRegistry{supported: map[string]bool{".txt": true}}
+	fh := &fakeHistoryStore{msgs: make(map[string][]llm.Message)}
+
+	cfg := config.ServerConfig{
+		Port:            8080,
+		FileStorageDir:  t.TempDir(),
+		UploadMaxSizeMB: 10,
+		WorkerCount:     2,
+		TaskMaxRetries:  3,
+		AuthEnabled:     true,
+		BootstrapAPIKey: testBootstrapKey,
+	}
+	// 全局配置（含 strategy 默认）
+	globalCfg := &config.Config{
+		LLM: config.LLMConfig{Temperature: 0.7, MaxTokens: 2048},
+		RAG: config.RAGConfig{TopK: 5, Strategy: config.StrategyConfig{
+			Query: "multi", Fusion: "rrf", Decomposition: "off",
+			StepBack: "off", HyDE: "off", Routing: "off",
+		}},
+		Retriever: config.RetrieverConfig{TopK: 5, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3},
+	}
+
+	cfgMgr := config.NewConfigManager(filepath.Join(t.TempDir(), "config.yaml"), globalCfg)
+
+	router := NewRouter(Dependencies{
+		Config:   cfg,
+		CfgMgr:   cfgMgr,
+		Rebuild:  func(c *config.Config) error { return nil }, // 测试中 rebuild 成功
+		Store:    fs,
+		VS:       fv,
+		BM25:     fb,
+		Registry: reg,
+		Engine:   func() rag.Engine { return fe },
+		History:  fh,
+	})
+
+	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh}, testBootstrapKey
+}
+
+const testBootstrapKey = "bootstrap-secret-key"
+
+// GET /config 返回分组视图
+func TestConfigGet(t *testing.T) {
+	env, _ := newConfigTestEnv(t)
+	w := doReq(t, env.router, "GET", "/api/v1/config", nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("GET /config 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "read_only") || !strings.Contains(w.Body.String(), "mutable") {
+		t.Errorf("响应应含 mutable/read_only 分组: %s", w.Body.String())
+	}
+}
+
+// bootstrap key PUT /config 成功
+func TestConfigPutBootstrap(t *testing.T) {
+	env, boot := newConfigTestEnv(t)
+	body := map[string]any{"llm": map[string]any{"temperature": 0.2}}
+	w := doReq(t, env.router, "PUT", "/api/v1/config", body, boot)
+	if w.Code != 200 {
+		t.Fatalf("bootstrap PUT 应成功: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "0.2") {
+		t.Errorf("响应应含新温度: %s", w.Body.String())
+	}
+}
+
+// 普通 key PUT /config → 403
+func TestConfigPutForbidden(t *testing.T) {
+	env, _ := newConfigTestEnv(t)
+	body := map[string]any{"llm": map[string]any{"temperature": 0.2}}
+	w := doReq(t, env.router, "PUT", "/api/v1/config", body, testAPIKey)
+	if w.Code != 403 {
+		t.Fatalf("普通 key PUT 应 403: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// 非法配置（temperature 超范围）PUT → 400
+func TestConfigPutInvalid(t *testing.T) {
+	env, boot := newConfigTestEnv(t)
+	body := map[string]any{"llm": map[string]any{"temperature": 5}}
+	w := doReq(t, env.router, "PUT", "/api/v1/config", body, boot)
+	if w.Code != 400 {
+		t.Fatalf("非法配置应 400: %d %s", w.Code, w.Body.String())
 	}
 }

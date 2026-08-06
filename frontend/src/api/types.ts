@@ -112,3 +112,16 @@ export interface SessionMeta {
   kbId: string
   updatedAt: string
 }
+
+// 配置视图（后端 handler_config）
+export interface ConfigView {
+  mutable: {
+    llm: { model: string; temperature: number; max_tokens: number; timeout: number }
+    embedder: { model: string; dimension: number }
+    retriever: { top_k: number; rrf_k: number; vector_weight: number; bm25_weight: number }
+    rag_strategy: StrategyConfig
+    loader: { min_readable_chars: number }
+  }
+  read_only: Array<{ key: string; value: string; needs_restart: boolean }>
+  is_bootstrap: boolean // 当前 Key 是否为 bootstrap（后端权威判断）
+}

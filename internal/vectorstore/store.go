@@ -27,6 +27,8 @@ type SearchResult struct {
 type VectorStore interface {
 	Upsert(ctx context.Context, records []VectorRecord) error
 	Search(ctx context.Context, req SearchRequest) ([]SearchResult, error)
+	// Get 按 ID 取单个点的 payload（引用来源查看 chunk 原文用）；不存在返回 ok=false
+	Get(ctx context.Context, id string) (map[string]any, bool, error)
 	Delete(ctx context.Context, ids []string) error
 	EnsureCollection(ctx context.Context) error
 	Close() error

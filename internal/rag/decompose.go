@@ -220,8 +220,8 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		return nil, false, fmt.Errorf("综合生成失败: %w", err)
 	}
 
-	e.appendHistory(sessionID, llm.RoleUser, question)
-	e.appendHistory(sessionID, llm.RoleAssistant, answer)
+	e.appendHistory(sessionID, llm.RoleUser, question, "")
+	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
 	return &RAGResult{Answer: answer, Sources: sources}, true, nil
 }
 
@@ -274,7 +274,7 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 		return nil, false, fmt.Errorf("回退生成失败: %w", err)
 	}
 
-	e.appendHistory(sessionID, llm.RoleUser, question)
-	e.appendHistory(sessionID, llm.RoleAssistant, answer)
+	e.appendHistory(sessionID, llm.RoleUser, question, "")
+	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
 	return &RAGResult{Answer: answer, Sources: sources}, true, nil
 }

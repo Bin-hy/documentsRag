@@ -62,12 +62,20 @@ const kbStrategyMigration = `
 ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS strategy TEXT NOT NULL DEFAULT '';
 `
 
+// 对话历史 sources 列迁移（幂等：已有库补列）
+const chatHistorySourcesMigration = `
+ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS sources TEXT NOT NULL DEFAULT '';
+`
+
 // Migrate 执行建表语句（幂等）
 func (s *pgStore) Migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, schemaDDL); err != nil {
 		return err
 	}
-	// 追加策略列迁移（schemaDDL 的 CREATE TABLE IF NOT EXISTS 对已有表不生效，需显式 ALTER）
-	_, err := s.pool.Exec(ctx, kbStrategyMigration)
+	// 追加迁移（schemaDDL 的 CREATE TABLE IF NOT EXISTS 对已有表不生效，需显式 ALTER）
+	if _, err := s.pool.Exec(ctx, kbStrategyMigration); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, chatHistorySourcesMigration)
 	return err
 }

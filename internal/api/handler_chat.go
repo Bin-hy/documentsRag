@@ -40,8 +40,18 @@ func (h *handler) Chat(c *gin.Context) {
 		return
 	}
 
-	result, err := h.engine.Ask(c.Request.Context(), req.SessionID, req.Question,
-		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy))
+	eng := h.engine()
+	if eng == nil {
+		Fail(c, CodeInternal, "引擎未初始化")
+		return
+	}
+	var snap *config.Config
+	if h.cfgMgr != nil {
+		snap = h.cfgMgr.Get() // 请求级配置快照（热重载一致性）
+	}
+	result, err := eng.Ask(c.Request.Context(), req.SessionID, req.Question,
+		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
+		rag.WithConfigSnapshot(snap))
 	if err != nil {
 		Fail(c, CodeInternal, "问答失败: "+err.Error())
 		return
@@ -76,8 +86,9 @@ func (h *handler) ChatStream(c *gin.Context) {
 		return
 	}
 
-	events, err := h.engine.StreamAsk(c.Request.Context(), req.SessionID, req.Question,
-		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy))
+	events, err := h.engine().StreamAsk(c.Request.Context(), req.SessionID, req.Question,
+		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
+		rag.WithConfigSnapshot(h.cfgSnapshot()))
 	if err != nil {
 		Fail(c, CodeInternal, "启动流式问答失败: "+err.Error())
 		return

@@ -262,8 +262,11 @@ func (m *mockVectorStore) Upsert(ctx context.Context, records []vectorstore.Vect
 	return nil
 }
 func (m *mockVectorStore) Delete(ctx context.Context, ids []string) error { return nil }
-func (m *mockVectorStore) EnsureCollection(ctx context.Context) error     { return nil }
-func (m *mockVectorStore) Close() error                                   { return nil }
+func (m *mockVectorStore) Get(ctx context.Context, id string) (map[string]any, bool, error) {
+	return nil, false, nil
+}
+func (m *mockVectorStore) EnsureCollection(ctx context.Context) error { return nil }
+func (m *mockVectorStore) Close() error                               { return nil }
 
 type mockReranker struct {
 	err error

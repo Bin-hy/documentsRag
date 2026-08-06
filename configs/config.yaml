@@ -56,9 +56,9 @@ retriever:
   top_k: 10
   # RRF 融合常数（越大排名差距越小）
   rrf_k: 60
-  # 向量检索权重
+  # 向量检索权重（算法要求：vector_weight + bm25_weight 之和必须为 1）
   vector_weight: 0.7
-  # BM25 关键词检索权重
+  # BM25 关键词检索权重（算法要求：与 vector_weight 之和必须为 1）
   bm25_weight: 0.3
   # 是否启用 BM25 混合检索
   enable_bm25: true

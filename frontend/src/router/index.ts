@@ -20,6 +20,7 @@ const router = createRouter({
         { path: 'kb', name: 'kb', component: () => import('../views/KbListView.vue') },
         { path: 'kb/:id', name: 'kb-detail', component: () => import('../views/KbDetailView.vue') },
         { path: 'keys', name: 'keys', component: () => import('../views/ApiKeysView.vue') },
+        { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
       ],
     },
   ],

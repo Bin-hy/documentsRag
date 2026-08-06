@@ -9,8 +9,8 @@ import (
 // HistoryStore 对话历史存储（带 ctx，适配 DB 访问）。
 // 签名与 rag.HistoryStore 对齐（rag 侧无 ctx，装配时用适配器包装）。
 type HistoryStore interface {
-	Append(ctx context.Context, sessionID string, role string, content string) error
-	Get(ctx context.Context, sessionID string, limit int) ([]llm.Message, error) // 最近 limit 条，时间正序
+	Append(ctx context.Context, sessionID string, role string, content string, sources string) error // sources = 引用来源 JSON 字符串（空 = 无）
+	Get(ctx context.Context, sessionID string, limit int) ([]llm.Message, error)                     // 最近 limit 条，时间正序
 	Clear(ctx context.Context, sessionID string) error
 }
 
@@ -20,10 +20,10 @@ type PostgresHistoryStore struct {
 }
 
 // Append 追加一条消息
-func (h *PostgresHistoryStore) Append(ctx context.Context, sessionID string, role string, content string) error {
+func (h *PostgresHistoryStore) Append(ctx context.Context, sessionID string, role string, content string, sources string) error {
 	_, err := h.pool.Exec(ctx,
-		`INSERT INTO chat_history (session_id, role, content) VALUES ($1, $2, $3)`,
-		sessionID, role, content,
+		`INSERT INTO chat_history (session_id, role, content, sources) VALUES ($1, $2, $3, $4)`,
+		sessionID, role, content, sources,
 	)
 	return err
 }
@@ -33,13 +33,13 @@ func (h *PostgresHistoryStore) Get(ctx context.Context, sessionID string, limit 
 	var query string
 	var args []any
 	if limit > 0 {
-		query = `SELECT role, content FROM (
-			SELECT role, content, created_at FROM chat_history
+		query = `SELECT role, content, sources FROM (
+			SELECT role, content, sources, created_at FROM chat_history
 			WHERE session_id = $1 ORDER BY created_at DESC LIMIT $2
 		) sub ORDER BY created_at ASC`
 		args = []any{sessionID, limit}
 	} else {
-		query = `SELECT role, content FROM chat_history
+		query = `SELECT role, content, sources FROM chat_history
 			WHERE session_id = $1 ORDER BY created_at ASC`
 		args = []any{sessionID}
 	}
@@ -53,7 +53,7 @@ func (h *PostgresHistoryStore) Get(ctx context.Context, sessionID string, limit 
 	msgs := make([]llm.Message, 0)
 	for rows.Next() {
 		var m llm.Message
-		if err := rows.Scan(&m.Role, &m.Content); err != nil {
+		if err := rows.Scan(&m.Role, &m.Content, &m.Sources); err != nil {
 			return nil, err
 		}
 		msgs = append(msgs, m)

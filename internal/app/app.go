@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"sync/atomic"
 
 	"github.com/Bin-hy/bin-rag/internal/api"
 	"github.com/Bin-hy/bin-rag/internal/chunker"
@@ -37,6 +39,11 @@ type App struct {
 	bm25   retriever.BM25Index
 	engine rag.Engine
 	worker task.WorkerPool
+
+	// 运行时组件（可热重载）：components 原子指针（指针共享，rebuild 闭包与 App 同一实例），cfgMgr 配置管理器
+	components     *atomic.Pointer[RuntimeComponents]
+	cfgMgr         *config.ConfigManager
+	historyAdapter *ragHistoryAdapter
 
 	router *gin.Engine
 	cancel context.CancelFunc
@@ -101,22 +108,47 @@ func New(cfg *config.Config) (*App, error) {
 	worker := task.NewWorkerPool(cfg.Server, st, pipe)
 	worker.Start(ctx)
 
-	// RAG 编排
-	llmClient := llm.NewLLM(cfg.LLM)
-	rr := reranker.NewReranker(cfg.Reranker)
-	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
-	engine := rag.NewEngine(cfg.RAG, llmClient, rt, &ragHistoryAdapter{inner: st.HistoryStore()}, emb)
+	// RAG 编排（可热重载组件）
+	historyAdapter := &ragHistoryAdapter{inner: st.HistoryStore()}
+	rtComp, err := BuildRuntime(cfg, vs, bm25, historyAdapter)
+	if err != nil {
+		cancel()
+		st.Close()
+		vs.Close()
+		return nil, fmt.Errorf("构建运行时组件失败: %w", err)
+	}
 
 	// HTTP 路由（API + 前端静态托管）
+	// 配置管理器（热重载 + 快照）；components 原子指针（指针共享）供 rebuild 闭包更新
+	components := &atomic.Pointer[RuntimeComponents]{}
+	components.Store(rtComp)
+
+	cfgMgr := config.NewConfigManager(cfgFile(cfg), cfg)
+
 	router := api.NewRouter(api.Dependencies{
 		Config:    cfg.Server,
 		LoaderCfg: cfg.Loader,
-		Store:     st,
-		VS:        vs,
-		BM25:      bm25,
-		Registry:  loader.NewDefaultRegistry(),
-		Engine:    engine,
-		History:   st.HistoryStore(),
+		CfgMgr:    cfgMgr,
+		Rebuild: func(newCfg *config.Config) error {
+			rt, err := BuildRuntime(newCfg, vs, bm25, historyAdapter)
+			if err != nil {
+				return fmt.Errorf("构建运行时组件失败: %w", err)
+			}
+			components.Store(rt) // 试构建成功后替换（ConfigManager 原子替换后新请求用新组件）
+			return nil
+		},
+		Engine: func() rag.Engine {
+			rt := components.Load()
+			if rt == nil {
+				return nil
+			}
+			return rt.Engine
+		},
+		Store:    st,
+		VS:       vs,
+		BM25:     bm25,
+		Registry: loader.NewDefaultRegistry(),
+		History:  st.HistoryStore(),
 	})
 	if err := webui.Register(router); err != nil {
 		cancel()
@@ -125,21 +157,46 @@ func New(cfg *config.Config) (*App, error) {
 		return nil, fmt.Errorf("挂载前端静态资源失败: %w", err)
 	}
 
-	return &App{
-		cfg:    *cfg,
-		st:     st,
-		vs:     vs,
-		bm25:   bm25,
-		engine: engine,
-		worker: worker,
-		router: router,
-		cancel: cancel,
-	}, nil
+	app := &App{
+		cfg:            *cfg,
+		st:             st,
+		vs:             vs,
+		bm25:           bm25,
+		engine:         rtComp.Engine,
+		worker:         worker,
+		historyAdapter: historyAdapter,
+		components:     components,
+		cfgMgr:         cfgMgr,
+		router:         router,
+		cancel:         cancel,
+	}
+	return app, nil
+}
+
+// cfgFile 返回配置文件路径（复用 main 的 -c/--config 解析；空则环境变量或默认）
+func cfgFile(_ *config.Config) string {
+	if p := ParseConfigFlag(os.Args[1:]); p != "" {
+		return p
+	}
+	if p := os.Getenv("BINRAG_CONFIG"); p != "" {
+		return p
+	}
+	return "./configs/config.yaml"
 }
 
 // Router 返回装配完成的 HTTP 路由（含 API 与前端静态托管，见 RegisterWebUI）。
 func (a *App) Router() *gin.Engine {
 	return a.router
+}
+
+// ConfigManager 返回配置管理器（热重载 + 快照）
+func (a *App) ConfigManager() *config.ConfigManager {
+	return a.cfgMgr
+}
+
+// Components 返回当前运行时组件（原子读取）
+func (a *App) Components() *RuntimeComponents {
+	return a.components.Load()
 }
 
 // Close 优雅释放资源：停止 worker（等待当前任务）、关闭数据库连接、取消上下文。
@@ -196,8 +253,8 @@ type ragHistoryAdapter struct {
 	inner store.HistoryStore
 }
 
-func (a *ragHistoryAdapter) Append(sessionID string, role string, content string) error {
-	return a.inner.Append(context.Background(), sessionID, role, content)
+func (a *ragHistoryAdapter) Append(sessionID string, role string, content string, sources string) error {
+	return a.inner.Append(context.Background(), sessionID, role, content, sources)
 }
 
 func (a *ragHistoryAdapter) Get(sessionID string, limit int) ([]llm.Message, error) {

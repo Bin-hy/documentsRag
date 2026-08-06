@@ -27,6 +27,7 @@ const (
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+	Sources string `json:"sources,omitempty"` // 引用来源 JSON 数组字符串（历史持久化用，空 = 无引用）
 }
 
 // StreamChunk 流式增量片段

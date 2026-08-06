@@ -52,6 +52,7 @@ type AskOptions struct {
 	KBID        string                 // 知识库范围，空表示不限定
 	KBStrategy  *config.StrategyConfig // 知识库级策略（nil = 用全局）
 	ReqStrategy *config.StrategyConfig // 请求级策略（nil = 未覆盖）
+	CfgSnapshot *config.Config         // 请求级配置快照（nil = 用引擎构建时配置）
 }
 
 // AskOption 函数式问答选项
@@ -70,6 +71,11 @@ func WithStrategy(kbStrategy, reqStrategy *config.StrategyConfig) AskOption {
 	}
 }
 
+// WithConfigSnapshot 设置请求级配置快照（配置热重载时保证单次请求一致性）
+func WithConfigSnapshot(cfg *config.Config) AskOption {
+	return func(o *AskOptions) { o.CfgSnapshot = cfg }
+}
+
 // RAGEngine 编排实现：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
 type RAGEngine struct {
 	cfg       config.RAGConfig
@@ -80,33 +86,45 @@ type RAGEngine struct {
 	embedder  embedding.Embedder // HyDE 用（nil 时 HyDE 禁用）
 }
 
+// ragCfgFor 返回请求级 RAG 配置（快照优先）
+func (e *RAGEngine) ragCfgFor(o AskOptions) config.RAGConfig {
+	if o.CfgSnapshot != nil {
+		return o.CfgSnapshot.RAG
+	}
+	return e.cfg
+}
+
 // effective 解析合并策略（请求 > 知识库 > 全局），失败返回全局默认降级
 func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
-	// 全局默认：优先用旧开关推导（兼容阶段一~三配置），未显式设置时用 cfg.Strategy
-	global := e.cfg.Strategy
+	// 全局默认：请求级快照优先（热重载一致性），否则引擎构建时配置
+	ragCfg := e.cfg
+	if o.CfgSnapshot != nil {
+		ragCfg = o.CfgSnapshot.RAG
+	}
+	global := ragCfg.Strategy
 	if global.Query == "" && global.Fusion == "" && global.Decomposition == "" &&
 		global.StepBack == "" && global.HyDE == "" && global.Routing == "" {
 		// 旧开关兜底：从 *On() 推导
 		global = config.StrategyConfig{}
-		if e.cfg.MultiQueryOn() {
+		if ragCfg.MultiQueryOn() {
 			global.Query = "multi"
 		} else {
 			global.Query = "single" // 显式单查询（防止默认 multi）
 			global.Fusion = "none"  // single 无多路可融合，必须 none
 		}
-		if e.cfg.DecompositionOn() {
-			global.Decomposition = e.cfg.DecompositionMode
+		if ragCfg.DecompositionOn() {
+			global.Decomposition = ragCfg.DecompositionMode
 			if global.Decomposition == "" {
 				global.Decomposition = "parallel"
 			}
 		}
-		if e.cfg.StepBackOn() {
+		if ragCfg.StepBackOn() {
 			global.StepBack = "on"
 		}
-		if e.cfg.RoutingOn() {
+		if ragCfg.RoutingOn() {
 			global.Routing = "auto"
 		}
-		if e.cfg.HyDEOn() {
+		if ragCfg.HyDEOn() {
 			global.HyDE = "on"
 		}
 	}
@@ -153,7 +171,7 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		route, ok, err := e.routeQuery(ctx, question)
 		strategy := ""
 		if err != nil || !ok {
-			strategy = e.cfg.RoutingFallback
+			strategy = e.ragCfgFor(o).RoutingFallback
 			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 		} else {
 			strategy = route.Strategy
@@ -189,8 +207,8 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 
 	// 检索结果为空：跳过 LLM 生成，直接兜底回答
 	if len(sources) == 0 {
-		e.appendHistory(sessionID, llm.RoleUser, question)
-		e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText)
+		e.appendHistory(sessionID, llm.RoleUser, question, "")
+		e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText, "")
 		return &RAGResult{Answer: noAnswerText}, nil
 	}
 
@@ -201,8 +219,8 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	}
 	slog.Info("RAG 生成完成", "session", sessionID, "生成耗时ms", time.Since(start).Milliseconds())
 
-	e.appendHistory(sessionID, llm.RoleUser, question)
-	e.appendHistory(sessionID, llm.RoleAssistant, answer)
+	e.appendHistory(sessionID, llm.RoleUser, question, "")
+	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
 
 	return &RAGResult{Answer: answer, Sources: sources}, nil
 }
@@ -223,7 +241,7 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 		route, ok, err := e.routeQuery(ctx, question)
 		strategy := ""
 		if err != nil || !ok {
-			strategy = e.cfg.RoutingFallback
+			strategy = e.ragCfgFor(o).RoutingFallback
 			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 		} else {
 			strategy = route.Strategy
@@ -271,8 +289,8 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 		// 检索结果为空：直接兜底回答
 		if len(sources) == 0 {
 			sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: noAnswerText})
-			e.appendHistory(sessionID, llm.RoleUser, question)
-			e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText)
+			e.appendHistory(sessionID, llm.RoleUser, question, "")
+			e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText, "")
 			sendEvent(ctx, out, StreamEvent{Type: EventDone})
 			return
 		}
@@ -303,8 +321,8 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			return
 		}
 
-		e.appendHistory(sessionID, llm.RoleUser, question)
-		e.appendHistory(sessionID, llm.RoleAssistant, sb.String())
+		e.appendHistory(sessionID, llm.RoleUser, question, "")
+		e.appendHistory(sessionID, llm.RoleAssistant, sb.String(), marshalSources(sources))
 		sendEvent(ctx, out, StreamEvent{Type: EventDone})
 	}()
 
@@ -312,8 +330,8 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 }
 
 // appendHistory 写入对话历史，失败仅告警不阻断主流程
-func (e *RAGEngine) appendHistory(sessionID string, role string, content string) {
-	if err := e.history.Append(sessionID, role, content); err != nil {
+func (e *RAGEngine) appendHistory(sessionID string, role string, content string, sourcesJSON string) {
+	if err := e.history.Append(sessionID, role, content, sourcesJSON); err != nil {
 		slog.Warn("写入对话历史失败", "session", sessionID, "err", err)
 	}
 }
@@ -325,8 +343,13 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		opt(&o)
 	}
 	eff := e.effective(o)
+	// 请求级配置快照（热重载一致性）：prepare 内 RAG 参数用快照
+	ragCfg := e.cfg
+	if o.CfgSnapshot != nil {
+		ragCfg = o.CfgSnapshot.RAG
+	}
 
-	history, err := e.history.Get(sessionID, e.cfg.HistoryLimit)
+	history, err := e.history.Get(sessionID, ragCfg.HistoryLimit)
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取对话历史失败: %w", err)
 	}
@@ -340,7 +363,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		if err != nil {
 			slog.Warn("多查询生成失败，降级单查询", "err", err)
 			// 降级：走现有单查询改写路径
-			if e.cfg.RewriteEnabled() {
+			if ragCfg.RewriteEnabled() {
 				rewritten, rerr := e.rewriteQuery(ctx, history, question)
 				if rerr != nil {
 					slog.Warn("Query 改写失败，降级使用原问题", "err", rerr)
@@ -357,7 +380,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			retrieveStart := time.Now()
 			chunks, err := e.retriever.SearchMulti(ctx, retriever.RetrieveRequest{
 				Query:  query,
-				TopK:   e.cfg.TopK,
+				TopK:   ragCfg.TopK,
 				Filter: kbFilter(o.KBID),
 			}, queries)
 			if err != nil {
@@ -366,7 +389,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			slog.Info("检索完成", "检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
 
 			// 上下文组装
-			items, sources := buildContext(chunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
+			items, sources := buildContext(chunks, ragCfg.MaxContextTokens, ragCfg.MaxChunks)
 			contextText, err := renderContext(items, e.templates.context)
 			if err != nil {
 				return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
@@ -382,7 +405,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 
 			return messages, sources, nil
 		}
-	} else if e.cfg.RewriteEnabled() {
+	} else if ragCfg.RewriteEnabled() {
 		rewriteStart := time.Now()
 		rewritten, err := e.rewriteQuery(ctx, history, question)
 		if err != nil {
@@ -402,7 +425,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 	} else {
 		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{
 			Query:  query,
-			TopK:   e.cfg.TopK,
+			TopK:   ragCfg.TopK,
 			Filter: kbFilter(o.KBID),
 		})
 	}
@@ -412,7 +435,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 	slog.Info("检索完成", "检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
 
 	// 上下文组装
-	items, sources := buildContext(chunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
+	items, sources := buildContext(chunks, ragCfg.MaxContextTokens, ragCfg.MaxChunks)
 	contextText, err := renderContext(items, e.templates.context)
 	if err != nil {
 		return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
@@ -510,4 +533,16 @@ func sendEvent(ctx context.Context, out chan<- StreamEvent, ev StreamEvent) bool
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// marshalSources 序列化引用来源为 JSON 字符串（历史持久化用）；空/失败返回空串
+func marshalSources(sources []Source) string {
+	if len(sources) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(sources)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
