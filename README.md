@@ -23,7 +23,7 @@
 
 ```mermaid
 graph TB
-    subgraph 前端（frontend/）
+    subgraph "前端（frontend/）"
         UI[Vue 3 + TypeScript SPA] --> HTTP[HTTP / SSE]
         UI2[Wails 桌面窗口] --> HTTP
     end
@@ -37,7 +37,7 @@ graph TB
 
     subgraph 入库链路
         DOC --> Q[任务队列]
-        Q --> P[Pipeline: Load → Chunk → Embed → Store]
+        Q --> P["Pipeline: Load → Chunk → Embed → Store"]
         P --> V[(Qdrant 向量库)]
         P --> B[BM25 内存索引]
         P --> PG[(PostgreSQL 元数据)]
@@ -46,7 +46,7 @@ graph TB
     subgraph 问答链路
         CHAT --> R[RAG Engine]
         R --> QW[Query 改写]
-        QW --> RET[混合检索: 向量 + BM25 + RRF]
+        QW --> RET["混合检索: 向量 + BM25 + RRF"]
         RET --> RR[Cross-encoder 重排序]
         R --> LLM[LLM 生成]
         V --> RET
