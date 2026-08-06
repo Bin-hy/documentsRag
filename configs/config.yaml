@@ -144,7 +144,9 @@ rag:
     # HyDE 假设文档：off / on
     hyde: off
     # 自动路由：off / auto
-    routing: off
+    routing: auto
+    # 思考链路：off / on（RAG 中间过程分步展示）
+    thinking: "on"
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数
