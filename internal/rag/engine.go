@@ -59,6 +59,7 @@ type AskOptions struct {
 	CfgSnapshot *config.Config         // 请求级配置快照（nil = 用引擎构建时配置）
 	Thinking    bool                   // 本次请求是否请求思考链路（最终以 effective 三级合并为准，F9）
 	Sink        TraceSink              // 思考链路采集器（流式由 handler 注入；非流式 engine 自建 sliceSink）
+	ForceSingle bool                   // routing 判定 direct 时置位：本次查询强制 single（不对外配置）
 }
 
 // AskOption 函数式问答选项
@@ -85,6 +86,19 @@ func WithConfigSnapshot(cfg *config.Config) AskOption {
 // WithThinking 请求本次问答启用思考链路（最终开关 = 三级合并策略的 thinking=on 且此值为 true）
 func WithThinking(on bool) AskOption {
 	return func(o *AskOptions) { o.Thinking = on }
+}
+
+// withForceSingle 仅供 engine 内部使用：routing 判定 direct 时强制本次查询 single（F-A1）
+func withForceSingle() AskOption {
+	return func(o *AskOptions) { o.ForceSingle = true }
+}
+
+// withForceSingleIf 按条件追加强制单查询选项（供 Ask/StreamAsk 调 prepare 时使用）
+func withForceSingleIf(o *AskOptions) []AskOption {
+	if o.ForceSingle {
+		return []AskOption{withForceSingle()}
+	}
+	return nil
 }
 
 // WithSink 注入思考链路采集器（流式：转发到 SSE 通道；非流式：传 nil 由 engine 自建）
@@ -225,6 +239,10 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 				Label: "路由判定",
 				Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
 			})
+			// 路由 direct：简单问题直接检索——本次查询强制 single，跳过多查询改写（F-A1）
+			if strategy == "direct" {
+				o.ForceSingle = true
+			}
 		}
 		// 按策略分流：decomposition → 分解；multi_query → 多查询；direct → 常规（含现有策略分支）
 		if strategy == "decomposition" {
@@ -249,7 +267,9 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		}
 	}
 
-	messages, sources, err := e.prepare(ctx, sessionID, question, append(opts, WithSink(sink))...)
+	prepareOpts := append(opts, WithSink(sink))
+	prepareOpts = append(prepareOpts, withForceSingleIf(&o)...)
+	messages, sources, err := e.prepare(ctx, sessionID, question, prepareOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -321,6 +341,10 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 					Label: "路由判定",
 					Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
 				})
+				// 路由 direct：简单问题直接检索——本次查询强制 single，跳过多查询改写（F-A1）
+				if strategy == "direct" {
+					o.ForceSingle = true
+				}
 			}
 			if strategy == "decomposition" {
 				if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
@@ -350,7 +374,9 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			return
 		}
 
-		messages, sources, err := e.prepare(ctx, sessionID, question, append(opts, WithSink(sink))...)
+		prepareOpts := append(opts, WithSink(sink))
+		prepareOpts = append(prepareOpts, withForceSingleIf(&o)...)
+		messages, sources, err := e.prepare(ctx, sessionID, question, prepareOpts...)
 		if err != nil {
 			sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
 			return
@@ -415,6 +441,10 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		opt(&o)
 	}
 	eff := e.effective(o)
+	// routing 判定 direct：本次查询强制 single，跳过多查询改写与多路检索（F-A1）
+	if o.ForceSingle {
+		eff.Query = "single"
+	}
 	sink := o.Sink // 思考链路采集器（由 Ask/StreamAsk 预先计算设置）
 	// 请求级配置快照（热重载一致性）：prepare 内 RAG 参数用快照
 	ragCfg := e.cfg

@@ -1547,3 +1547,135 @@ func TestAsk_ThinkingDecompose(t *testing.T) {
 		t.Errorf("缺少子问题检索环节: %+v", stepTypes(res.Thinking))
 	}
 }
+
+// ---- A 方案：routing=direct 强制单查询 ----
+
+// AC-A1/A2: 路由判定 direct 时只做一次检索，thinking 无 multi_query 环节
+func TestAsk_RoutingDirectForcesSingle(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy = config.StrategyConfig{Query: "multi", Fusion: "rrf", Routing: "auto", Thinking: "on"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "simple", "strategy": "direct", "reasoning": "简单定义查询"}`, nil
+			case 2:
+				return "rewritten-q", nil // 单查询改写（direct 强制 single）
+			default:
+				return "直接回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "vector", Recalled: 2})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "什么是RAG？", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 只检索一次（单路 Search，非 SearchMulti）
+	ft.mu.Lock()
+	if len(ft.queries) != 1 {
+		t.Errorf("direct 应单次检索，实际 %d 次: %v", len(ft.queries), ft.queries)
+	}
+	ft.mu.Unlock()
+
+	// thinking 无 multi_query 环节
+	for _, s := range res.Thinking {
+		if s.Type == StepMultiQuery {
+			t.Errorf("direct 判定后不应出现多查询改写环节: %+v", stepTypes(res.Thinking))
+		}
+	}
+	hasRetrieval := false
+	for _, s := range res.Thinking {
+		if s.Type == StepRetrieval {
+			hasRetrieval = true
+			break
+		}
+	}
+	if !hasRetrieval {
+		t.Errorf("direct 路径应含单路检索环节: %+v", stepTypes(res.Thinking))
+	}
+}
+
+// AC-A3: 路由判定 multi_query 时仍走多路检索（行为不变）
+func TestAsk_RoutingMultiQueryUnchanged(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy = config.StrategyConfig{Routing: "auto", Thinking: "on"} // query 默认 multi
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			switch genCalls {
+			case 1:
+				return `{"complexity": "medium", "strategy": "multi_query", "reasoning": "多角度"}`, nil
+			case 2:
+				return `["变体1","变体2"]`, nil
+			default:
+				return "多查询回答", nil
+			}
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			if req.Trace != nil {
+				req.Trace(retriever.RetrieveTrace{Query: req.Query, Method: "multi_fusion", Recalled: 2})
+			}
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "中等问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 原问题 + 2 变体 = 3 路（行为不变）
+	ft.mu.Lock()
+	if len(ft.queries) != 3 {
+		t.Errorf("multi_query 应 3 路检索，实际 %d: %v", len(ft.queries), ft.queries)
+	}
+	ft.mu.Unlock()
+
+	// thinking 含多查询环节
+	hasMulti := false
+	for _, s := range res.Thinking {
+		if s.Type == StepMultiQuery {
+			hasMulti = true
+			break
+		}
+	}
+	if !hasMulti {
+		t.Errorf("multi_query 判定应含多查询改写环节: %+v", stepTypes(res.Thinking))
+	}
+}
+
+// ---- B 方案：默认 system prompt 文案 ----
+
+// AC-B1: 默认 prompt 不再含绝对拒答表述，含「资料未覆盖」
+func TestDefaultSystemPromptNoAbsoluteReject(t *testing.T) {
+	if strings.Contains(defaultSystemPrompt, "未找到相关资料") {
+		t.Errorf("默认 prompt 不应包含绝对拒答表述: %q", defaultSystemPrompt)
+	}
+	if !strings.Contains(defaultSystemPrompt, "资料未覆盖") {
+		t.Errorf("默认 prompt 应包含「资料未覆盖」指引: %q", defaultSystemPrompt)
+	}
+	if !strings.Contains(defaultSystemPrompt, "不要编造") {
+		t.Errorf("默认 prompt 应保留不编造底线: %q", defaultSystemPrompt)
+	}
+}
