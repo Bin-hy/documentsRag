@@ -2,10 +2,11 @@ package retriever
 
 // RetrieveRequest 检索请求
 type RetrieveRequest struct {
-	Query  string
-	TopK   int
-	Filter map[string]any
-	Trace  func(t RetrieveTrace) // 思考链路回调，nil=关闭（N2 零开销）
+	Query      string
+	TopK       int
+	Filter     map[string]any
+	Trace      func(t RetrieveTrace) // 思考链路回调，nil=关闭（N2 零开销）
+	SkipRerank bool                  // true=本检索不做 rerank（由调用方在融合/汇总后统一整体重排）
 }
 
 // RetrieveTrace 检索过程追踪数据（由 rag 层翻译为 ThinkingStep）

@@ -19,6 +19,10 @@ type Retriever interface {
 	SearchMulti(ctx context.Context, req RetrieveRequest, queries []string) ([]RetrieveResult, error)
 	// SearchByVector 按向量检索（HyDE 用）：不走查询 embed，直接向量搜索
 	SearchByVector(ctx context.Context, vector []float32, topK int, filter map[string]any) ([]RetrieveResult, error)
+	// Rerank 整体重排：对候选集统一重排一次（多路融合/汇总后调用）。
+	// EnableReranker 关闭或 reranker 失败时原样返回 results（降级，不阻塞主链路）；
+	// trace 非 nil 时上报 rerank 前后对比（思考链路用）。
+	Rerank(ctx context.Context, query string, results []RetrieveResult, topN int, trace func(RetrieveTrace)) ([]RetrieveResult, error)
 }
 
 type defaultRetriever struct {
@@ -52,6 +56,35 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 		topK = r.config.TopK
 	}
 
+	fusedResults, method, err := r.searchFused(ctx, req.Query, topK, req.Filter)
+	if err != nil {
+		return nil, err
+	}
+
+	// 思考链路：检索方式与融合召回数（F4）；rerank 前后对比由 rerankIfEnabled 上报（F5）
+	if req.Trace != nil {
+		req.Trace(RetrieveTrace{
+			Query:    req.Query,
+			Method:   method,
+			Recalled: len(fusedResults),
+		})
+	}
+
+	if len(fusedResults) > topK {
+		fusedResults = fusedResults[:topK]
+	}
+
+	// Reranker（可选）：单路场景路内重排；SkipRerank 时由调用方在融合/汇总后统一重排
+	if !req.SkipRerank {
+		fusedResults = r.rerankIfEnabled(ctx, req.Query, fusedResults, topK, req.Trace)
+	}
+
+	return fusedResults, nil
+}
+
+// searchFused 核心检索：向量 + BM25 → RRF 融合，不做 rerank、不截断、不上报 Trace。
+// 返回 (融合结果, 检索方式 vector/hybrid, error)。供 Search/SearchMulti 复用。
+func (r *defaultRetriever) searchFused(ctx context.Context, query string, topK int, filter map[string]any) ([]RetrieveResult, string, error) {
 	var (
 		vectorResults []RetrieveResult
 		bm25Results   []BM25Result
@@ -63,23 +96,23 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		vectorResults, vectorErr = r.vectorSearch(ctx, req.Query, topK, req.Filter)
+		vectorResults, vectorErr = r.vectorSearch(ctx, query, topK, filter)
 	}()
 
 	// BM25 检索（可选，按 kb_id 过滤）
-	kbID, _ := req.Filter["kb_id"].(string)
+	kbID, _ := filter["kb_id"].(string)
 	if r.config.EnableBM25 && r.bm25Index != nil && r.bm25Index.DocCount() > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bm25Results = r.bm25Index.SearchFiltered(req.Query, topK, kbID)
+			bm25Results = r.bm25Index.SearchFiltered(query, topK, kbID)
 		}()
 	}
 
 	wg.Wait()
 
 	if vectorErr != nil {
-		return nil, fmt.Errorf("向量检索失败: %w", vectorErr)
+		return nil, "", fmt.Errorf("向量检索失败: %w", vectorErr)
 	}
 
 	// 如果没有 BM25 结果，直接用向量结果
@@ -100,60 +133,55 @@ func (r *defaultRetriever) Search(ctx context.Context, req RetrieveRequest) ([]R
 		fusedResults = FuseRRF(vectorResults, bm25Results, allDocs, rrfCfg)
 	}
 
-	// 思考链路：检索方式与融合召回数（F4）；rerank 前后对比随后单独上报（F5）
-	if req.Trace != nil {
-		method := "vector"
-		if len(bm25Results) > 0 {
-			method = "hybrid"
+	method := "vector"
+	if len(bm25Results) > 0 {
+		method = "hybrid"
+	}
+	return fusedResults, method, nil
+}
+
+// rerankIfEnabled 统一的整体重排入口：EnableReranker 关闭或 reranker 失败时原样返回
+// results（降级，不阻塞主链路，F8）；成功时上报 rerank 前后对比（trace 非 nil 时，F7）。
+func (r *defaultRetriever) rerankIfEnabled(ctx context.Context, query string, results []RetrieveResult, topN int, trace func(RetrieveTrace)) []RetrieveResult {
+	if !r.config.EnableReranker || r.reranker == nil || len(results) == 0 {
+		return results
+	}
+
+	candidates := make([]reranker.RerankCandidate, len(results))
+	for i, fr := range results {
+		candidates[i] = reranker.RerankCandidate{
+			ID:       fr.ID,
+			Content:  fr.Content,
+			Score:    fr.Score,
+			Metadata: fr.Metadata,
 		}
-		req.Trace(RetrieveTrace{
-			Query:    req.Query,
-			Method:   method,
-			Recalled: len(fusedResults),
+	}
+
+	reranked, err := r.reranker.Rerank(ctx, query, candidates, topN)
+	if err != nil {
+		slog.Warn("重排失败，降级返回原结果", "query", query, "err", err)
+		return results
+	}
+
+	out := make([]RetrieveResult, len(reranked))
+	for i, rr := range reranked {
+		out[i] = RetrieveResult{
+			ID:       rr.ID,
+			Content:  rr.Content,
+			Score:    rr.Score,
+			Metadata: rr.Metadata,
+		}
+	}
+
+	// 思考链路：rerank 前后排序对比（F5）
+	if trace != nil {
+		trace(RetrieveTrace{
+			Query:        query,
+			RerankBefore: toRankedItems(results),
+			RerankAfter:  toRankedItems(out),
 		})
 	}
-
-	if len(fusedResults) > topK {
-		fusedResults = fusedResults[:topK]
-	}
-
-	// Reranker（可选）
-	if r.config.EnableReranker && r.reranker != nil && len(fusedResults) > 0 {
-		candidates := make([]reranker.RerankCandidate, len(fusedResults))
-		for i, fr := range fusedResults {
-			candidates[i] = reranker.RerankCandidate{
-				ID:       fr.ID,
-				Content:  fr.Content,
-				Score:    fr.Score,
-				Metadata: fr.Metadata,
-			}
-		}
-
-		reranked, err := r.reranker.Rerank(ctx, req.Query, candidates, topK)
-		if err == nil {
-			results := make([]RetrieveResult, len(reranked))
-			for i, rr := range reranked {
-				results[i] = RetrieveResult{
-					ID:       rr.ID,
-					Content:  rr.Content,
-					Score:    rr.Score,
-					Metadata: rr.Metadata,
-				}
-			}
-			// 思考链路：rerank 前后排序对比（F5）
-			if req.Trace != nil {
-				req.Trace(RetrieveTrace{
-					Query:        req.Query,
-					RerankBefore: toRankedItems(fusedResults),
-					RerankAfter:  toRankedItems(results),
-				})
-			}
-			return results, nil
-		}
-		// Reranker 失败时降级返回融合结果
-	}
-
-	return fusedResults, nil
+	return out
 }
 
 func (r *defaultRetriever) vectorSearch(ctx context.Context, query string, topK int, filter map[string]any) ([]RetrieveResult, error) {
@@ -262,14 +290,15 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 			}
 			defer func() { <-sem }()
 
-			out, err := r.Search(ctx, RetrieveRequest{Query: q, TopK: req.TopK, Filter: req.Filter})
-			if err != nil {
+			// 路内检索不做 rerank（SkipRerank 语义）：融合后统一整体重排（N1/AC2）
+			out, _, serr := r.searchFused(ctx, q, req.TopK, req.Filter)
+			if serr != nil {
 				mu.Lock()
 				if firstErr == nil {
-					firstErr = err
+					firstErr = serr
 				}
 				mu.Unlock()
-				slog.Warn("多路检索单路失败，忽略该路", "query", q, "err", err)
+				slog.Warn("多路检索单路失败，忽略该路", "query", q, "err", serr)
 				return
 			}
 			results[i] = out
@@ -310,5 +339,14 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 			PerQuery: perQuery,
 		})
 	}
+
+	// 融合后整体重排一次（F1/AC2）
+	fused = r.rerankIfEnabled(ctx, req.Query, fused, topK, req.Trace)
+
 	return fused, nil
+}
+
+// Rerank 整体重排接口实现：对候选集统一重排（EnableReranker 关闭/失败时原样返回，降级不阻塞）。
+func (r *defaultRetriever) Rerank(ctx context.Context, query string, results []RetrieveResult, topN int, trace func(RetrieveTrace)) ([]RetrieveResult, error) {
+	return r.rerankIfEnabled(ctx, query, results, topN, trace), nil
 }

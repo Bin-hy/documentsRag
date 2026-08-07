@@ -269,10 +269,12 @@ func (m *mockVectorStore) EnsureCollection(ctx context.Context) error { return n
 func (m *mockVectorStore) Close() error                               { return nil }
 
 type mockReranker struct {
-	err error
+	err   error
+	calls int // rerank 调用计数（测试断言用）
 }
 
 func (m *mockReranker) Rerank(ctx context.Context, query string, candidates []reranker.RerankCandidate, topN int) ([]reranker.RerankResult, error) {
+	m.calls++
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -562,5 +564,101 @@ func TestSearchMulti_TracePerQueryOrder(t *testing.T) {
 	}
 	if tr.Recalled == 0 {
 		t.Errorf("融合召回数应为正数")
+	}
+}
+
+// 思考链路/重排时机：SkipRerank=true 时 Search 不触发 rerank（C9）
+func TestSearch_SkipRerank(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容"}},
+	}}
+	cfg := config.RetrieverConfig{
+		TopK: 10, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3,
+		EnableBM25: false, EnableReranker: true,
+	}
+	rk := &mockReranker{}
+	ret := NewRetriever(cfg, emb, vs, nil, rk)
+
+	_, err := ret.Search(context.Background(), RetrieveRequest{Query: "测试", SkipRerank: true})
+	if err != nil {
+		t.Fatalf("Search 失败: %v", err)
+	}
+	if rk.calls != 0 {
+		t.Errorf("SkipRerank=true 时不应触发 rerank，实际 %d 次", rk.calls)
+	}
+
+	// 默认（SkipRerank=false）仍触发路内 rerank
+	_, err = ret.Search(context.Background(), RetrieveRequest{Query: "测试"})
+	if err != nil {
+		t.Fatalf("Search 失败: %v", err)
+	}
+	if rk.calls != 1 {
+		t.Errorf("默认应触发 1 次路内 rerank，实际 %d 次", rk.calls)
+	}
+}
+
+// 融合后整体重排：SearchMulti 多路不 rerank、融合后恰好 1 次整体 rerank（C2/AC2）
+func TestSearchMulti_OverallRerank(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容1"}},
+		{ID: "v2", Score: 0.8, Payload: map[string]any{"content": "内容2"}},
+	}}
+	cfg := config.RetrieverConfig{
+		TopK: 10, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3,
+		EnableBM25: false, EnableReranker: true,
+	}
+	rk := &mockReranker{}
+	ret := NewRetriever(cfg, emb, vs, nil, rk)
+
+	var traces []RetrieveTrace
+	queries := []string{"q1", "q2", "q3"}
+	results, err := ret.SearchMulti(context.Background(), RetrieveRequest{
+		Query: "q1",
+		Trace: func(t RetrieveTrace) { traces = append(traces, t) },
+	}, queries)
+	if err != nil {
+		t.Fatalf("SearchMulti 失败: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("期望融合结果")
+	}
+
+	// 整体 rerank 恰好 1 次（AC2/N1）
+	if rk.calls != 1 {
+		t.Errorf("多路融合后应整体 rerank 1 次，实际 %d 次", rk.calls)
+	}
+
+	// Trace：第二次回调应含 rerank 前后对比（融合后 → 整体重排后）
+	if len(traces) != 2 {
+		t.Fatalf("期望 2 次 Trace（融合 + rerank），实际 %d", len(traces))
+	}
+	if traces[0].Method != "multi_fusion" {
+		t.Errorf("首次 Trace 应为 multi_fusion: %+v", traces[0])
+	}
+	if len(traces[1].RerankBefore) == 0 || len(traces[1].RerankAfter) == 0 {
+		t.Errorf("整体 rerank Trace 应含前后对比: %+v", traces[1])
+	}
+}
+
+// 整体重排降级：reranker 失败时 SearchMulti 返回融合结果不报错（C6/F8）
+func TestSearchMulti_RerankFailDegrades(t *testing.T) {
+	emb := &mockEmbedder{vectors: [][]float32{{0.1, 0.2}}}
+	vs := &mockVectorStore{results: []vectorstore.SearchResult{
+		{ID: "v1", Score: 0.9, Payload: map[string]any{"content": "内容"}},
+	}}
+	cfg := config.RetrieverConfig{
+		TopK: 10, RRFK: 60, VectorWeight: 0.7, BM25Weight: 0.3,
+		EnableBM25: false, EnableReranker: true,
+	}
+	ret := NewRetriever(cfg, emb, vs, nil, &mockReranker{err: errors.New("rerank down")})
+
+	results, err := ret.SearchMulti(context.Background(), RetrieveRequest{Query: "q"}, []string{"q"})
+	if err != nil {
+		t.Fatalf("rerank 失败时应降级而非报错: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("降级后应返回融合结果")
 	}
 }

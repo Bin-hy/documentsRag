@@ -114,9 +114,10 @@ func (e *RAGEngine) judgeStepBack(ctx context.Context, question string) (stepBac
 // searchSubQuery 检索单个查询（Multi-Query 启用时用 SearchMulti），返回检索结果
 func (e *RAGEngine) searchSubQuery(ctx context.Context, query string, kbID string) ([]retriever.RetrieveResult, error) {
 	req := retriever.RetrieveRequest{
-		Query:  query,
-		TopK:   e.cfg.TopK,
-		Filter: kbFilter(kbID),
+		Query:      query,
+		TopK:       e.cfg.TopK,
+		Filter:     kbFilter(kbID),
+		SkipRerank: true, // 路内不 rerank：由 tryDecompose/tryStepBack 汇总后统一整体重排（F3/F4）
 	}
 	if e.cfg.MultiQueryOn() {
 		return e.retriever.SearchMulti(ctx, req, []string{query})
@@ -218,6 +219,12 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		slog.Warn("分解后无任何检索结果，走兜底")
 		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
 	}
+	// 汇总后整体重排一次（F3/AC4；rerank 关闭或失败时降级返回原结果）
+	allChunks, _ = e.retriever.Rerank(ctx, question, allChunks, e.cfg.MaxChunks, traceSinkForRequest(sink, question))
+	if len(allChunks) == 0 {
+		slog.Warn("分解后重排结果为空，走兜底")
+		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
+	}
 
 	items, sources := buildContext(allChunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
 	contextText, err := renderContext(items, e.templates.context)
@@ -293,6 +300,11 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 	})
 
 	allChunks := append(backChunks, origChunks...)
+	if len(allChunks) == 0 {
+		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
+	}
+	// 合并后整体重排一次（F4/AC4；rerank 关闭或失败时降级返回原结果）
+	allChunks, _ = e.retriever.Rerank(ctx, question, allChunks, e.cfg.MaxChunks, traceSinkForRequest(sink, question))
 	if len(allChunks) == 0 {
 		return withThinking(&o, &RAGResult{Answer: noAnswerText}), true, nil
 	}

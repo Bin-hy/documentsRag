@@ -99,7 +99,12 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 		Label: "HyDE 向量检索",
 		Data:  RetrievalData{Query: query, Method: "hyde_vector", Recalled: len(hydeResults)},
 	})
-	origResults, err := e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID)})
+	origResults, err := e.retriever.Search(ctx, retriever.RetrieveRequest{
+		Query:      query,
+		TopK:       e.cfg.TopK,
+		Filter:     kbFilter(o.KBID),
+		SkipRerank: true, // 融合后统一整体重排（F2）
+	})
 	if err != nil {
 		slog.Warn("HyDE 原查询检索失败，使用 HyDE 结果", "err", err)
 		return hydeResults, nil
@@ -114,6 +119,9 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 	fused := retriever.FuseMultiQuery([][]retriever.RetrieveResult{hydeResults, origResults}, 60, e.cfg.TopK)
 	slog.Info("HyDE 检索完成", "HyDE路", len(hydeResults), "原查询路", len(origResults), "融合数", len(fused),
 		"耗时ms", time.Since(start).Milliseconds())
+
+	// 5. 融合后整体重排一次（F2/AC3；rerank 关闭或失败时降级返回融合结果）
+	fused, _ = e.retriever.Rerank(ctx, query, fused, e.cfg.TopK, traceSinkForRequest(sink, query))
 	return fused, nil
 }
 

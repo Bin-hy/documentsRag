@@ -47,6 +47,7 @@ type fakeRetriever struct {
 	searchFunc func(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error)
 	queries    []string
 	byVecCalls int
+	rerankFunc func(ctx context.Context, query string, results []retriever.RetrieveResult, topN int) []retriever.RetrieveResult
 }
 
 func (f *fakeRetriever) Search(ctx context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
@@ -69,6 +70,20 @@ func (f *fakeRetriever) SearchMulti(ctx context.Context, req retriever.RetrieveR
 		}
 		out = append(out, res...)
 	}
+	// 模拟真 retriever 的融合后整体重排：rerankFunc 非 nil 时重排并触发 trace
+	f.mu.Lock()
+	rf := f.rerankFunc
+	f.mu.Unlock()
+	if rf != nil {
+		out = rf(ctx, req.Query, out, req.TopK)
+		if req.Trace != nil && len(out) > 0 {
+			req.Trace(retriever.RetrieveTrace{
+				Query:        req.Query,
+				RerankBefore: fakeRankedItems(out),
+				RerankAfter:  fakeRankedItems(out),
+			})
+		}
+	}
 	return out, nil
 }
 
@@ -77,6 +92,34 @@ func (f *fakeRetriever) SearchByVector(ctx context.Context, vector []float32, to
 	f.byVecCalls++
 	f.mu.Unlock()
 	return f.searchFunc(ctx, retriever.RetrieveRequest{Query: "hyde-vector"})
+}
+
+// Rerank 整体重排（融合后整体重排接口）：默认原样返回；可配 rerankFunc 模拟重排行为
+func (f *fakeRetriever) Rerank(ctx context.Context, query string, results []retriever.RetrieveResult, topN int, trace func(retriever.RetrieveTrace)) ([]retriever.RetrieveResult, error) {
+	f.mu.Lock()
+	rf := f.rerankFunc
+	f.mu.Unlock()
+	if rf != nil {
+		out := rf(ctx, query, results, topN)
+		if trace != nil && len(out) > 0 {
+			trace(retriever.RetrieveTrace{
+				Query:        query,
+				RerankBefore: fakeRankedItems(results),
+				RerankAfter:  fakeRankedItems(out),
+			})
+		}
+		return out, nil
+	}
+	return results, nil
+}
+
+// fakeRankedItems 测试辅助：RetrieveResult → retriever.RankedItem
+func fakeRankedItems(results []retriever.RetrieveResult) []retriever.RankedItem {
+	items := make([]retriever.RankedItem, len(results))
+	for i, r := range results {
+		items[i] = retriever.RankedItem{ID: r.ID, Rank: i + 1, Score: r.Score}
+	}
+	return items
 }
 
 // fakeEmbedder 固定向量
@@ -1677,5 +1720,68 @@ func TestDefaultSystemPromptNoAbsoluteReject(t *testing.T) {
 	}
 	if !strings.Contains(defaultSystemPrompt, "不要编造") {
 		t.Errorf("默认 prompt 应保留不编造底线: %q", defaultSystemPrompt)
+	}
+}
+
+// ---- 融合后整体重排（22-fusion-rerank）----
+
+// C7/AC7: 多查询路径整体重排恰好 1 次，thinking 含单个 StepRerank，无逐路 rerank
+func TestAsk_MultiQuerySingleRerank(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy = config.StrategyConfig{Query: "multi", Fusion: "rrf", Thinking: "on"}
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return `["变体1","变体2"]`, nil // 多查询变体
+			}
+			return "多查询回答", nil
+		},
+	}
+	rerankCalls := 0
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, req retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+		rerankFunc: func(_ context.Context, _ string, results []retriever.RetrieveResult, _ int) []retriever.RetrieveResult {
+			rerankCalls++
+			return results // 原样返回（整体重排模拟）
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "中等问题", WithThinking(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+
+	// 整体重排恰好 1 次（AC2）
+	if rerankCalls != 1 {
+		t.Errorf("多路场景整体重排应恰好 1 次，实际 %d", rerankCalls)
+	}
+
+	// thinking 含单个 StepRerank、含 StepMultiQuery
+	rerankSteps := 0
+	hasMulti := false
+	for _, s := range res.Thinking {
+		switch s.Type {
+		case StepRerank:
+			rerankSteps++
+			rd, ok := s.Data.(RerankData)
+			if !ok || len(rd.Before) == 0 || len(rd.After) == 0 {
+				t.Errorf("整体重排载荷应含前后对比: %+v", s.Data)
+			}
+		case StepMultiQuery:
+			hasMulti = true
+		}
+	}
+	if rerankSteps != 1 {
+		t.Errorf("thinking 应含恰 1 个 StepRerank，实际 %d: %+v", rerankSteps, stepTypes(res.Thinking))
+	}
+	if !hasMulti {
+		t.Errorf("多查询路径应含 StepMultiQuery: %+v", stepTypes(res.Thinking))
 	}
 }

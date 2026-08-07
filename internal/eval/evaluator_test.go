@@ -49,6 +49,10 @@ func (f *fakeRetriever) SearchByVector(ctx context.Context, vector []float32, to
 	return f.results, nil
 }
 
+func (f *fakeRetriever) Rerank(ctx context.Context, query string, results []retriever.RetrieveResult, topN int, trace func(retriever.RetrieveTrace)) ([]retriever.RetrieveResult, error) {
+	return results, nil
+}
+
 // fakeEngine 返回固定回答与来源
 type fakeEngine struct {
 	answer  string
