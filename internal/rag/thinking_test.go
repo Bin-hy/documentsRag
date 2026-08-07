@@ -110,3 +110,40 @@ func TestTruncateRunes(t *testing.T) {
 		t.Errorf("截断后 rune 数错误: %d", len([]rune(got)))
 	}
 }
+
+// traceSinkForRequest 翻译：检索 trace → StepRetrieval；纯 rerank trace → 仅 StepRerank（不产生冗余检索步骤）
+func TestTraceSinkForRequest(t *testing.T) {
+	// 检索 trace（method+recalled）→ StepRetrieval
+	s1 := &sliceSink{}
+	traceSinkForRequest(s1, "q")(retriever.RetrieveTrace{Query: "q", Method: "hybrid", Recalled: 3})
+	if len(s1.steps) != 1 || s1.steps[0].Type != StepRetrieval {
+		t.Fatalf("检索 trace 应产生 1 个 StepRetrieval: %+v", stepTypes(s1.steps))
+	}
+
+	// 纯 rerank trace → 仅 StepRerank
+	s2 := &sliceSink{}
+	traceSinkForRequest(s2, "q")(retriever.RetrieveTrace{
+		Query:        "q",
+		RerankBefore: []retriever.RankedItem{{ID: "a", Rank: 1}},
+		RerankAfter:  []retriever.RankedItem{{ID: "b", Rank: 1}},
+	})
+	if len(s2.steps) != 1 || s2.steps[0].Type != StepRerank {
+		t.Fatalf("纯 rerank trace 应只产生 1 个 StepRerank: %+v", stepTypes(s2.steps))
+	}
+
+	// 混合（检索 + rerank 同回调）→ StepRetrieval + StepRerank
+	s3 := &sliceSink{}
+	traceSinkForRequest(s3, "q")(retriever.RetrieveTrace{
+		Query: "q", Method: "hybrid", Recalled: 2,
+		RerankBefore: []retriever.RankedItem{{ID: "a", Rank: 1}},
+		RerankAfter:  []retriever.RankedItem{{ID: "b", Rank: 1}},
+	})
+	if len(s3.steps) != 2 || s3.steps[0].Type != StepRetrieval || s3.steps[1].Type != StepRerank {
+		t.Fatalf("混合 trace 应产生 StepRetrieval + StepRerank: %+v", stepTypes(s3.steps))
+	}
+
+	// sink 为 nil → 回调为 nil（零开销）
+	if traceSinkForRequest(nil, "q") != nil {
+		t.Error("sink 为 nil 时应返回 nil 回调")
+	}
+}

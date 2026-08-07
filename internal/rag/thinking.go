@@ -205,6 +205,16 @@ func traceSinkForRequest(sink TraceSink, query string) func(t retriever.Retrieve
 		return nil
 	}
 	return func(t retriever.RetrieveTrace) {
+		// 纯 rerank 回调（仅前后对比、无检索方式/召回数）：只记 StepRerank，
+		// 避免产生 Method/Recalled 均为空的冗余 StepRetrieval
+		if t.Method == "" && len(t.PerQuery) == 0 && len(t.RerankAfter) > 0 {
+			recordStep(sink, ThinkingStep{
+				Type:  StepRerank,
+				Label: "重排序",
+				Data:  rerankDataFrom(t),
+			})
+			return
+		}
 		recordStep(sink, ThinkingStep{
 			Type:  StepRetrieval,
 			Label: "检索",
