@@ -24,10 +24,11 @@ func TestBochaSearch(t *testing.T) {
 			t.Errorf("请求体错误: %+v", req)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"code":0,"data":{"webpages":[
-			{"name":"RAG召回概述","url":"https://example.com/1","summary":"摘要1","content":"正文内容1","site_name":"示例站"},
-			{"name":"检索增强生成","url":"https://example.com/2","summary":"摘要2","content":"","site_name":""}
-		]}}`)
+		// 博查真实结构：data.webPages.value（数组）
+		fmt.Fprint(w, `{"code":200,"msg":null,"data":{"webPages":{"value":[
+			{"name":"RAG召回概述","url":"https://example.com/1","snippet":"短摘要","summary":"完整摘要1","siteName":"示例站"},
+			{"name":"检索增强生成","url":"https://example.com/2","snippet":"摘要2","summary":"","siteName":""}
+		]}}}`)
 	}))
 	defer server.Close()
 
@@ -49,12 +50,15 @@ func TestBochaSearch(t *testing.T) {
 		t.Fatalf("结果数 = %d, want 2", len(results))
 	}
 	r := results[0]
-	if r.Title != "RAG召回概述" || r.URL != "https://example.com/1" || r.Snippet != "摘要1" ||
-		r.Content != "正文内容1" || r.Site != "示例站" {
+	// summary 优先作为摘要；siteName 映射站点名；博查无 content
+	if r.Title != "RAG召回概述" || r.URL != "https://example.com/1" || r.Snippet != "完整摘要1" || r.Site != "示例站" {
 		t.Errorf("结果解析错误: %+v", r)
 	}
+	if results[1].Snippet != "摘要2" {
+		t.Errorf("summary 为空时应回退 snippet: %+v", results[1])
+	}
 	if results[1].Site != "" {
-		t.Errorf("空 site_name 应为空串: %+v", results[1])
+		t.Errorf("空 siteName 应为空串: %+v", results[1])
 	}
 }
 
@@ -106,7 +110,7 @@ func TestBochaOptionsOverride(t *testing.T) {
 			t.Errorf("Options 未覆盖: %+v", req)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"code":0,"data":{"webpages":[]}}`)
+		fmt.Fprint(w, `{"code":0,"data":{"webPages":{"value":[]}}}`)
 	}))
 	defer server.Close()
 

@@ -272,11 +272,87 @@ func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs Histo
 	return e
 }
 
+// enhancedSystemPrompt 增强模式专用 system prompt：
+// 替换默认 prompt，明确「知识库资料不足时必须调用 web_search 工具」，消除与默认 prompt 的冲突表述。
+const enhancedSystemPrompt = `你是一个基于企业知识库的问答助手，同时具备联网搜索能力。
+你可以使用 web_search 工具搜索互联网，获取知识库未覆盖或需要实时更新的信息。
+当检索到的资料不足以回答用户问题（包括资料未覆盖、问题涉及最新/实时信息、需要外部事实核实时），必须调用 web_search 工具获取相关信息，再基于检索结果回答；禁止直接回答「资料未覆盖」。
+回答时按 [编号] 标注引用来源，如 [1][2]。`
+
+// enhancedAnswer 增强模式生成回答：runToolLoop 后取末条 assistant 内容；无可用工具回退普通生成
+func (e *RAGEngine) enhancedAnswer(ctx context.Context, messages []llm.Message, o AskOptions, sink TraceSink) (string, error) {
+	msgs, err := e.runToolLoop(ctx, messages, o, sink)
+	if err != nil {
+		return "", err
+	}
+	if last := msgs[len(msgs)-1]; last.Role == llm.RoleAssistant {
+		return last.Content, nil
+	}
+	return e.llm.Generate(ctx, messages)
+}
+
+// forceWebSearchFallback 增强模式联网搜索兜底：
+// 系统主动执行 web_search 工具（查询优先取消息序列中最后的 user 消息——改写后查询，
+// 否则用传入 query），把搜索结果以 tool 消息注入 messages。
+// 保证增强模式必定联网（解决小模型 function calling 不稳定问题）。
+// 返回注入后的 messages 与是否注入成功（无 web_search 工具时原样返回 + false）。
+func (e *RAGEngine) forceWebSearchFallback(ctx context.Context, messages []llm.Message, query string, sink TraceSink) ([]llm.Message, bool, error) {
+	tool, ok := e.tools.Get(datasource.SourceWebSearch)
+	if !ok {
+		return messages, false, nil
+	}
+
+	// 查询词：直接用原始问题（改写后查询可能被小模型改坏——如改为英文/带引号，
+	// 且 prepare 未暴露改写结果；原始问题最可靠）
+	q := query
+
+	argsJSON, err := json.Marshal(map[string]any{"query": q})
+	if err != nil {
+		return messages, false, err
+	}
+
+	// 执行搜索：结构化工具（web_search）同时返回条目供思考链完整展示
+	var result string
+	var items []ToolStepItem
+	if st, ok := tool.(StructuredTool); ok {
+		result, items, err = st.ExecuteStructured(ctx, string(argsJSON))
+	} else {
+		result, err = tool.Execute(ctx, string(argsJSON))
+	}
+	if err != nil {
+		result = "错误: " + err.Error()
+	}
+
+	recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用（联网搜索）",
+		Data: ToolStepData{Name: datasource.SourceWebSearch, Args: string(argsJSON),
+			Result: truncateRunes(result, maxToolResultPreviewLen), Items: items}})
+
+	messages = append(messages,
+		llm.Message{Role: llm.RoleAssistant, ToolCalls: []llm.ToolCall{
+			{ID: "auto_web_1", Name: datasource.SourceWebSearch, Arguments: string(argsJSON)}}},
+		llm.Message{Role: llm.RoleTool, ToolCallID: "auto_web_1", Content: result},
+	)
+	return messages, true, nil
+}
+
 // runToolLoop 增强模式工具循环：LLM 可多次请求工具（上限 maxToolRounds 防死循环），
 // 工具结果以 role=tool 消息回传；循环结束返回含最终 assistant 回答的消息序列。
 // 私有性约束：tools 按 o.AllowedDataSources 过滤（非空且不含该工具名 → 不注册）；
 // allowed 为空（未配置）时，增强模式开启即视为授权 web_search 等工具。
 func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o AskOptions, sink TraceSink) ([]llm.Message, error) {
+	// 增强模式：替换 system prompt 为增强版（含强制工具引导），消除与默认 prompt「资料未覆盖直接回答」的冲突
+	systemReplaced := false
+	for i := range messages {
+		if messages[i].Role == llm.RoleSystem {
+			messages[i].Content = enhancedSystemPrompt
+			systemReplaced = true
+			break
+		}
+	}
+	if !systemReplaced {
+		messages = append([]llm.Message{{Role: llm.RoleSystem, Content: enhancedSystemPrompt}}, messages...)
+	}
+
 	// 按允许的数据源过滤工具（私有性：allowed 非空时仅允许集合内的工具）
 	var tools []Tool
 	for _, t := range e.tools.List() {
@@ -285,6 +361,7 @@ func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o A
 		}
 		tools = append(tools, t)
 	}
+	slog.Info("增强模式工具循环", "tools", len(tools), "allowed", o.AllowedDataSources)
 	if len(tools) == 0 {
 		return messages, nil // 无可用工具（或全部被 allowed 过滤），调用方回退普通生成
 	}
@@ -303,6 +380,7 @@ func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o A
 		if err != nil {
 			return nil, fmt.Errorf("增强模式生成失败: %w", err)
 		}
+		slog.Info("增强模式生成结果", "round", round, "toolCalls", len(resp.ToolCalls), "contentLen", len(resp.Content))
 		if len(resp.ToolCalls) == 0 {
 			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
 			return messages, nil
@@ -322,15 +400,32 @@ func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o A
 				continue
 			}
 
-			result, err := tool.Execute(ctx, tc.Arguments)
-			if err != nil {
-				recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用",
-					Data: ToolStepData{Name: tc.Name, Args: tc.Arguments, Error: err.Error()}})
-				result = "错误: " + err.Error()
+			// 结构化工具（如 web_search）：执行并同时取结构化条目（思考链完整展示搜索结果）
+			// 普通工具：仅文本结果（思考链展示截断摘要）
+			var stepData ToolStepData
+			var result string
+			if st, ok := tool.(StructuredTool); ok {
+				text, items, err := st.ExecuteStructured(ctx, tc.Arguments)
+				if err != nil {
+					stepData = ToolStepData{Name: tc.Name, Args: tc.Arguments, Error: err.Error()}
+					result = "错误: " + err.Error()
+				} else {
+					stepData = ToolStepData{Name: tc.Name, Args: tc.Arguments,
+						Result: truncateRunes(text, maxToolResultPreviewLen), Items: items}
+					result = text
+				}
 			} else {
-				recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用",
-					Data: ToolStepData{Name: tc.Name, Args: tc.Arguments, Result: truncateRunes(result, maxToolResultPreviewLen)}})
+				var err error
+				result, err = tool.Execute(ctx, tc.Arguments)
+				if err != nil {
+					stepData = ToolStepData{Name: tc.Name, Args: tc.Arguments, Error: err.Error()}
+					result = "错误: " + err.Error()
+				} else {
+					stepData = ToolStepData{Name: tc.Name, Args: tc.Arguments,
+						Result: truncateRunes(result, maxToolResultPreviewLen)}
+				}
 			}
+			recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用", Data: stepData})
 			messages = append(messages,
 				llm.Message{Role: llm.RoleTool, ToolCallID: tc.ID, Content: result})
 		}
@@ -474,9 +569,23 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 		return nil, err
 	}
 
-	// 检索结果为空：跳过 LLM 生成，直接兜底回答
+	// 检索结果为空：增强模式强制 web 搜索兜底（不依赖模型自觉）；否则直接兜底回答
 	if len(sources) == 0 {
 		e.appendHistory(sessionID, llm.RoleUser, question, "")
+		if o.Enhanced {
+			injectedMsgs, injected, err := e.forceWebSearchFallback(ctx, messages, question, sink)
+			if err != nil {
+				return nil, err
+			}
+			if injected {
+				answer, err := e.enhancedAnswer(ctx, injectedMsgs, o, sink)
+				if err != nil {
+					return nil, err
+				}
+				e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
+				return withThinking(&o, &RAGResult{Answer: answer}), nil
+			}
+		}
 		e.appendHistory(sessionID, llm.RoleAssistant, noAnswerText, "")
 		return withThinking(&o, &RAGResult{Answer: noAnswerText}), nil
 	}
@@ -484,19 +593,15 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	start := time.Now()
 	var answer string
 	if o.Enhanced {
-		// 增强模式：tool loop（LLM 可调用 web_search 等工具），最终回答取自消息序列末条；
-		// 无可用工具时回退普通生成
-		msgs, err := e.runToolLoop(ctx, messages, o, sink)
+		// 增强模式：先由系统主动执行一次 web 搜索（查询=改写后问题）注入上下文，
+		// 再跑 tool loop（模型可继续自主调用工具）；无可用工具时回退普通生成
+		injectedMsgs, _, err := e.forceWebSearchFallback(ctx, messages, question, sink)
 		if err != nil {
 			return nil, err
 		}
-		if last := msgs[len(msgs)-1]; last.Role == llm.RoleAssistant {
-			answer = last.Content
-		} else {
-			answer, err = e.llm.Generate(ctx, messages)
-			if err != nil {
-				return nil, err
-			}
+		answer, err = e.enhancedAnswer(ctx, injectedMsgs, o, sink)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		answer, err = e.llm.Generate(ctx, messages)
@@ -616,9 +721,15 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			return
 		}
 
-		// 增强模式：先静默完成 tool loop（thinking 事件在 sources 之前发出），
-		// 最终回答一次性发出；无可用工具时回退下方普通流式
+		// 增强模式：系统主动执行一次 web 搜索注入上下文，再静默完成 tool loop
+		// （thinking 事件在 sources 之前发出），最终回答一次性发出；无可用工具时回退下方普通流式
 		if o.Enhanced {
+			var err error
+			messages, _, err = e.forceWebSearchFallback(ctx, messages, question, sink)
+			if err != nil {
+				sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
+				return
+			}
 			msgs, err := e.runToolLoop(ctx, messages, o, sink)
 			if err != nil {
 				sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})

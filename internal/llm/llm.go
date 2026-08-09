@@ -318,7 +318,7 @@ func (l *openaiLLM) buildRequestBody(messages []Message, opts []ChatOption, stre
 
 	reqBody := chatCompletionRequest{
 		Model:       model,
-		Messages:    messages,
+		Messages:    toOpenAIMessages(messages),
 		Temperature: temperature,
 		MaxTokens:   maxTokens,
 		Stream:      stream,
@@ -345,11 +345,41 @@ func (l *openaiLLM) setHeaders(req *http.Request) {
 // chatCompletionRequest OpenAI 兼容请求体
 type chatCompletionRequest struct {
 	Model       string           `json:"model"`
-	Messages    []Message        `json:"messages"`
+	Messages    []map[string]any `json:"messages"` // OpenAI 协议消息（toOpenAIMessages 转换）
 	Temperature float32          `json:"temperature"`
 	MaxTokens   int              `json:"max_tokens"`
 	Stream      bool             `json:"stream"`
 	Tools       []map[string]any `json:"tools,omitempty"` // OpenAI function tools（空 = 不传）
+}
+
+// toOpenAIMessages 把内部 Message 转为 OpenAI 协议消息：
+//   - assistant 的 ToolCalls 转为嵌套格式 [{id, type:"function", function:{name, arguments}}]
+//   - role=tool 消息携带 tool_call_id 回引
+//   - 内部字段（Sources 引用 JSON）不下发
+func toOpenAIMessages(messages []Message) []map[string]any {
+	out := make([]map[string]any, 0, len(messages))
+	for _, m := range messages {
+		om := map[string]any{"role": m.Role, "content": m.Content}
+		if len(m.ToolCalls) > 0 {
+			tcs := make([]map[string]any, 0, len(m.ToolCalls))
+			for _, tc := range m.ToolCalls {
+				tcs = append(tcs, map[string]any{
+					"id":   tc.ID,
+					"type": "function",
+					"function": map[string]any{
+						"name":      tc.Name,
+						"arguments": tc.Arguments,
+					},
+				})
+			}
+			om["tool_calls"] = tcs
+		}
+		if m.ToolCallID != "" {
+			om["tool_call_id"] = m.ToolCallID
+		}
+		out = append(out, om)
+	}
+	return out
 }
 
 // chatToolCall 响应中的工具调用（function 嵌套结构）

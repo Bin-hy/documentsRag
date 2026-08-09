@@ -40,26 +40,34 @@ func (t *webSearchTool) Parameters() map[string]any {
 // maxWebResultContentLen 单条结果正文截断长度（控制上下文 token 占用）
 const maxWebResultContentLen = 800
 
+// Execute 文本执行：转发到 ExecuteStructured，忽略结构化条目
 func (t *webSearchTool) Execute(ctx context.Context, argsJSON string) (string, error) {
+	text, _, err := t.ExecuteStructured(ctx, argsJSON)
+	return text, err
+}
+
+// ExecuteStructured 搜索并返回：回传 LLM 的文本结果 + 供思考链路展示的结构化条目（完整）
+func (t *webSearchTool) ExecuteStructured(ctx context.Context, argsJSON string) (string, []ToolStepItem, error) {
 	var args struct {
 		Query string `json:"query"`
 		Count int    `json:"count"`
 	}
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("解析 web_search 参数失败: %w", err)
+		return "", nil, fmt.Errorf("解析 web_search 参数失败: %w", err)
 	}
 	if args.Query == "" {
-		return "", fmt.Errorf("web_search 缺少 query 参数")
+		return "", nil, fmt.Errorf("web_search 缺少 query 参数")
 	}
 
 	results, err := t.provider.Search(ctx, args.Query, search.Options{Count: args.Count})
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(results) == 0 {
-		return "未搜索到相关结果。", nil
+		return "未搜索到相关结果。", nil, nil
 	}
 
+	items := make([]ToolStepItem, 0, len(results))
 	var sb strings.Builder
 	for i, r := range results {
 		fmt.Fprintf(&sb, "[%d] %s\n链接: %s\n", i+1, r.Title, r.URL)
@@ -70,6 +78,8 @@ func (t *webSearchTool) Execute(ctx context.Context, argsJSON string) (string, e
 			sb.WriteString("内容: " + truncateRunes(r.Content, maxWebResultContentLen) + "\n")
 		}
 		sb.WriteString("\n")
+
+		items = append(items, ToolStepItem{Title: r.Title, URL: r.URL, Snippet: r.Snippet})
 	}
-	return strings.TrimRight(sb.String(), "\n"), nil
+	return strings.TrimRight(sb.String(), "\n"), items, nil
 }

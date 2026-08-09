@@ -152,10 +152,17 @@ export interface HyDEData {
 }
 
 // 工具调用（增强模式 function calling）
+export interface ToolStepItem {
+  title: string
+  url?: string
+  snippet?: string
+}
+
 export interface ToolStepData {
   name: string
   args?: string
   result?: string
+  items?: ToolStepItem[]
   error?: string
 }
 

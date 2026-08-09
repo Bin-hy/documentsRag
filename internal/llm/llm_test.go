@@ -85,7 +85,7 @@ func TestGenerate_MessagesPassed(t *testing.T) {
 		{Role: RoleUser, Content: "u2"},
 	}
 	var mu sync.Mutex
-	var gotMessages []Message
+	var gotMessages []map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		req := decodeRequest(t, r)
@@ -108,10 +108,9 @@ func TestGenerate_MessagesPassed(t *testing.T) {
 		t.Fatalf("消息数量错误: got %d want %d", len(gotMessages), len(want))
 	}
 	for i := range want {
-		if gotMessages[i].Role != want[i].Role || gotMessages[i].Content != want[i].Content ||
-			gotMessages[i].Sources != want[i].Sources || gotMessages[i].ToolCallID != want[i].ToolCallID ||
-			len(gotMessages[i].ToolCalls) != len(want[i].ToolCalls) {
-			t.Errorf("消息[%d]错误: got %+v want %+v", i, gotMessages[i], want[i])
+		got := gotMessages[i]
+		if got["role"] != want[i].Role || got["content"] != want[i].Content {
+			t.Errorf("消息[%d]错误: got %+v want %+v", i, got, want[i])
 		}
 	}
 }
@@ -463,5 +462,44 @@ func TestStreamGenerate_ToolCallsAggregated(t *testing.T) {
 	tc := done.ToolCalls[0]
 	if tc.ID != "call_9" || tc.Name != "web_search" || tc.Arguments != `{"query":"RAG"}` {
 		t.Errorf("流式 ToolCall 聚合错误: %+v", tc)
+	}
+}
+
+// tool_calls 回传格式：assistant 消息输出 OpenAI 嵌套格式 {id,type,function:{name,arguments}}
+func TestToOpenAIMessagesToolCallsNested(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleSystem, Content: "sys"},
+		{Role: RoleAssistant, Content: "", ToolCalls: []ToolCall{
+			{ID: "call_1", Name: "web_search", Arguments: `{"query":"q"}`},
+		}},
+		{Role: RoleTool, ToolCallID: "call_1", Content: "结果"},
+	}
+
+	out := toOpenAIMessages(msgs)
+	if len(out) != 3 {
+		t.Fatalf("消息数量 = %d, want 3", len(out))
+	}
+	// assistant tool_calls 嵌套格式
+	assistant := out[1]
+	tcs, ok := assistant["tool_calls"].([]map[string]any)
+	if !ok || len(tcs) != 1 {
+		t.Fatalf("tool_calls 结构错误: %+v", assistant["tool_calls"])
+	}
+	if tcs[0]["type"] != "function" || tcs[0]["id"] != "call_1" {
+		t.Errorf("tool_calls 缺少 type/id: %+v", tcs[0])
+	}
+	fn, ok := tcs[0]["function"].(map[string]any)
+	if !ok || fn["name"] != "web_search" || fn["arguments"] != `{"query":"q"}` {
+		t.Errorf("function 嵌套错误: %+v", tcs[0]["function"])
+	}
+	// tool 结果消息带 tool_call_id
+	toolMsg := out[2]
+	if toolMsg["role"] != RoleTool || toolMsg["tool_call_id"] != "call_1" || toolMsg["content"] != "结果" {
+		t.Errorf("tool 结果消息错误: %+v", toolMsg)
+	}
+	// 内部 Sources 字段不下发
+	sys := out[0]
+	if _, ok := sys["sources"]; ok {
+		t.Errorf("Sources 内部字段不应下发: %+v", sys)
 	}
 }

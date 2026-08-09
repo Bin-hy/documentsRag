@@ -201,7 +201,18 @@ function toggleChunk(i: number) {
             <div v-if="as<ToolStepData>(step.data).args" class="kv">
               <span class="k">参数</span><span class="v">{{ as<ToolStepData>(step.data).args }}</span>
             </div>
-            <div v-if="as<ToolStepData>(step.data).result" class="kv">
+            <!-- 结构化结果（如搜索结果：标题/链接/摘要，完整展示） -->
+            <div v-if="(as<ToolStepData>(step.data).items || []).length" class="kv">
+              <span class="k">结果</span>
+              <div class="tool-items">
+                <div v-for="(item, ii) in as<ToolStepData>(step.data).items" :key="ii" class="tool-item">
+                  <a v-if="item.url" :href="item.url" target="_blank" rel="noopener" class="tool-item-title">{{ item.title }}</a>
+                  <span v-else class="tool-item-title">{{ item.title }}</span>
+                  <div v-if="item.snippet" class="tool-item-snippet">{{ item.snippet }}</div>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="as<ToolStepData>(step.data).result" class="kv">
               <span class="k">结果</span><span class="v">{{ as<ToolStepData>(step.data).result }}</span>
             </div>
             <div v-if="as<ToolStepData>(step.data).error" class="kv">
@@ -402,5 +413,39 @@ function toggleChunk(i: number) {
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--br-text-secondary);
+}
+
+.tool-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tool-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tool-item-title {
+  color: var(--br-accent);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.tool-item-title:hover {
+  text-decoration: underline;
+}
+
+.tool-item-snippet {
+  font-size: 12px;
+  color: var(--br-text-secondary);
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

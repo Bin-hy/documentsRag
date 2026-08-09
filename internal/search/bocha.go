@@ -56,16 +56,19 @@ type bochaRequest struct {
 }
 
 type bochaResponse struct {
-	Code int    `json:"code"`
-	Msg  string `json:"msg"`
+	Code int `json:"code"`
+	Msg  any `json:"msg"`
 	Data struct {
-		Webpages []struct {
-			Name     string `json:"name"`
-			URL      string `json:"url"`
-			Summary  string `json:"summary"`
-			Content  string `json:"content"`
-			SiteName string `json:"site_name"`
-		} `json:"webpages"`
+		// 博查实际返回：data.webPages.value（数组）；字段无 content，正文需另行抓取
+		WebPages struct {
+			Value []struct {
+				Name     string `json:"name"`
+				URL      string `json:"url"`
+				Snippet  string `json:"snippet"`
+				Summary  string `json:"summary"`
+				SiteName string `json:"siteName"`
+			} `json:"value"`
+		} `json:"webPages"`
 	} `json:"data"`
 }
 
@@ -117,17 +120,22 @@ func (p *bochaProvider) Search(ctx context.Context, query string, opts Options) 
 		return nil, fmt.Errorf("解析博查响应失败: %w", err)
 	}
 	if br.Code != 0 && br.Code != 200 {
-		return nil, fmt.Errorf("博查 API 业务错误 code=%d msg=%s", br.Code, br.Msg)
+		return nil, fmt.Errorf("博查 API 业务错误 code=%d msg=%v", br.Code, br.Msg)
 	}
 
-	results := make([]Result, 0, len(br.Data.Webpages))
-	for _, wp := range br.Data.Webpages {
+	pages := br.Data.WebPages.Value
+	results := make([]Result, 0, len(pages))
+	for _, wp := range pages {
+		snippet := wp.Summary
+		if snippet == "" {
+			snippet = wp.Snippet
+		}
 		results = append(results, Result{
 			Title:   wp.Name,
 			URL:     wp.URL,
-			Snippet: wp.Summary,
-			Content: wp.Content,
+			Snippet: snippet,
 			Site:    wp.SiteName,
+			// 博查不返回正文 content；如需正文可后续加模式 B 自主抓取
 		})
 	}
 	return results, nil

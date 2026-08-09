@@ -20,6 +20,13 @@ type Tool interface {
 	Execute(ctx context.Context, argsJSON string) (string, error)
 }
 
+// StructuredTool 可选接口：工具可同时返回结构化条目（如搜索结果标题/链接/摘要），
+// 供思考链路完整展示；未实现时思考链路仅展示文本摘要（Result）。
+type StructuredTool interface {
+	// ExecuteStructured 与 Execute 语义一致，额外返回结构化条目
+	ExecuteStructured(ctx context.Context, argsJSON string) (string, []ToolStepItem, error)
+}
+
 // ToolRegistry 工具注册中心（并发安全）
 type ToolRegistry interface {
 	Register(t Tool)

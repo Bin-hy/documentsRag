@@ -139,12 +139,20 @@ type HyDEData struct {
 	HypoDoc string `json:"hypo_doc"`
 }
 
+// ToolStepItem 工具返回的结构化条目（如搜索结果：标题/链接/摘要）
+type ToolStepItem struct {
+	Title   string `json:"title"`             // 标题
+	URL     string `json:"url,omitempty"`     // 链接
+	Snippet string `json:"snippet,omitempty"` // 摘要/片段
+}
+
 // ToolStepData 工具调用数据（增强模式 function calling）
 type ToolStepData struct {
-	Name   string `json:"name"`             // 工具名
-	Args   string `json:"args,omitempty"`   // 调用参数 JSON
-	Result string `json:"result,omitempty"` // 结果摘要（截断）
-	Error  string `json:"error,omitempty"`  // 执行错误（非空表示失败）
+	Name   string         `json:"name"`             // 工具名
+	Args   string         `json:"args,omitempty"`   // 调用参数 JSON
+	Result string         `json:"result,omitempty"` // 结果摘要（截断）
+	Items  []ToolStepItem `json:"items,omitempty"`  // 结构化结果（完整，不截断）
+	Error  string         `json:"error,omitempty"`  // 执行错误（非空表示失败）
 }
 
 // maxHypoDocPreviewLen HyDE 假设文档预览最大字符数（N3）
