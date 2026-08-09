@@ -15,12 +15,14 @@ import (
 type routeResult struct {
 	Complexity string // simple / medium / complex
 	Strategy   string // direct / multi_query / decomposition
+	DataSource string // vector_store / web_search（空=默认 vector_store）
 	Reasoning  string
 }
 
-// routeQuery 调用 LLM 判定查询复杂度与策略。解析失败返回 (zero, false, err)（外层回退默认策略）。
-func (e *RAGEngine) routeQuery(ctx context.Context, question string) (routeResult, bool, error) {
-	prompt, err := renderRouting(question, e.templates.routing)
+// routeQuery 调用 LLM 判定查询复杂度、策略与数据源。解析失败返回 (zero, false, err)（外层回退默认策略）。
+// allowedText 为允许的数据源说明（约束 LLM 只在允许范围内选择数据源）。
+func (e *RAGEngine) routeQuery(ctx context.Context, question, allowedText string) (routeResult, bool, error) {
+	prompt, err := renderRouting(question, allowedText, e.templates.routing)
 	if err != nil {
 		return routeResult{}, false, fmt.Errorf("渲染路由提示失败: %w", err)
 	}
@@ -34,12 +36,13 @@ func (e *RAGEngine) routeQuery(ctx context.Context, question string) (routeResul
 	var parsed struct {
 		Complexity string `json:"complexity"`
 		Strategy   string `json:"strategy"`
+		DataSource string `json:"data_source"`
 		Reasoning  string `json:"reasoning"`
 	}
 	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
 		return routeResult{}, false, fmt.Errorf("解析路由判定失败（非 JSON）: %w", err)
 	}
-	return routeResult{Complexity: parsed.Complexity, Strategy: parsed.Strategy, Reasoning: parsed.Reasoning}, true, nil
+	return routeResult{Complexity: parsed.Complexity, Strategy: parsed.Strategy, DataSource: parsed.DataSource, Reasoning: parsed.Reasoning}, true, nil
 }
 
 // shouldHyde 判断当前查询是否应用 HyDE（skip_simple 且 simple 查询时跳过）

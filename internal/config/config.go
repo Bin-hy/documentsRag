@@ -46,6 +46,13 @@ type RerankerConfig struct {
 	TopN       int    `yaml:"top_n"`
 	MaxRetries int    `yaml:"max_retries"`
 	QPS        int    `yaml:"qps"`
+	// Mode 重排模式：api（默认，调 /v1/rerank 专用重排接口）/ llm（用 chat/completions 让通用大模型打分重排）
+	Mode string `yaml:"mode"`
+	// LLMPromptTemplate LLM 打分模式的自定义 prompt 模板，留空使用内置默认模板
+	// 模板中 {query}、{document} 占位符会被替换为实际查询与候选文档内容
+	LLMPromptTemplate string `yaml:"llm_prompt_template"`
+	// LLMTemperature LLM 打分模式的采样温度，默认 0（打分场景要求确定性输出）
+	LLMTemperature float64 `yaml:"llm_temperature"`
 }
 
 // EmbedderConfig Embedding 提供者配置
@@ -98,8 +105,9 @@ type LLMConfig struct {
 //	HyDE: off / on
 //	Routing: off / auto
 //	Thinking: off / on
+//	DataSources: 允许的数据源（vector_store / web_search），空 = 默认仅 vector_store（私有性默认）
 //
-// 空字符串表示「未设置，继承低层级」（全局默认由 applyDefaults 兜底）
+// 空字符串/空数组表示「未设置，继承低层级」（全局默认由 applyDefaults 兜底）
 type StrategyConfig struct {
 	Query         string `yaml:"query" json:"query,omitempty"`
 	Fusion        string `yaml:"fusion" json:"fusion,omitempty"`
@@ -108,6 +116,8 @@ type StrategyConfig struct {
 	HyDE          string `yaml:"hyde" json:"hyde,omitempty"`
 	Routing       string `yaml:"routing" json:"routing,omitempty"`
 	Thinking      string `yaml:"thinking" json:"thinking,omitempty"` // off / on，空=继承
+	// DataSources 允许的数据源列表；空=未设置（合并后默认仅 vector_store）
+	DataSources []string `yaml:"data_sources" json:"data_sources,omitempty"`
 }
 
 // RAGConfig RAG 编排配置

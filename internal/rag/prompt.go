@@ -62,8 +62,8 @@ const defaultStepBackJudgeTemplate = `判断以下问题是否适合「先退一
 只输出 JSON：{"step_back": true 或 false, "question": "回退问题（step_back 为 true 时）"}，不要其他内容。
 用户问题：{{.Question}}`
 
-// defaultRoutingTemplate 路由复杂度判定模板：输出 JSON
-const defaultRoutingTemplate = `分析以下查询的复杂度，并选择合适的检索策略。
+// defaultRoutingTemplate 路由复杂度判定模板：输出 JSON（含数据源选择）
+const defaultRoutingTemplate = `分析以下查询的复杂度、选择合适的检索策略，并选择本次查询使用的数据源。
 复杂度：
 - simple：简单事实查询、单一明确问题、定义类问题
 - medium：需要多角度召回、同义改写有帮助的问题
@@ -72,7 +72,12 @@ const defaultRoutingTemplate = `分析以下查询的复杂度，并选择合适
 - direct：直接检索（simple 用）
 - multi_query：多查询多路召回（medium 用）
 - decomposition：问题分解后逐子问题检索综合（complex 用）
-只输出 JSON：{"complexity": "simple|medium|complex", "strategy": "direct|multi_query|decomposition", "reasoning": "简短理由"}，不要其他内容。
+数据源：
+- vector_store：向量知识库（企业内部文档）
+- web_search：web 搜索（外部互联网）
+可选数据源（本次查询只能从以下范围内选择，不得超出）：
+{{.AllowedText}}
+只输出 JSON：{"complexity": "simple|medium|complex", "strategy": "direct|multi_query|decomposition", "data_source": "vector_store|web_search", "reasoning": "简短理由"}，不要其他内容。
 用户问题：{{.Question}}`
 
 // defaultHyDETemplate 假设文档生成模板
@@ -188,12 +193,13 @@ func renderStepBackJudge(question string, tpl string) (string, error) {
 
 // routeData 路由判定模板数据
 type routeData struct {
-	Question string
+	Question    string
+	AllowedText string // 可选数据源说明（由允许的数据源集合渲染，约束 LLM 输出）
 }
 
-// renderRouting 渲染路由复杂度判定提示
-func renderRouting(question string, tpl string) (string, error) {
-	return renderTemplate(tpl, routeData{Question: question})
+// renderRouting 渲染路由复杂度判定提示；allowedText 为允许的数据源说明文本
+func renderRouting(question, allowedText, tpl string) (string, error) {
+	return renderTemplate(tpl, routeData{Question: question, AllowedText: allowedText})
 }
 
 // hydeData 假设文档生成模板数据

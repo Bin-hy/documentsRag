@@ -65,24 +65,34 @@ retriever:
   # 是否启用 Reranker 重排序
   enable_reranker: true
 
-# 重排序配置（Cross-encoder API，兼容 /v1/rerank 接口）
+# 重排序配置（支持两种模式）
+# mode=api（默认）：调用 /v1/rerank 专用重排接口（Jina/Cohere/vLLM 等）
+# mode=llm / ollama：无专用 rerank 端点时，用通用大模型（chat/completions，如 Ollama）对候选打分重排
 reranker:
-  # API 地址（支持 Jina/Cohere/本地 bge-reranker 等兼容接口）
+  # API 地址（根地址，代码会自动拼接路径：api 模式拼 /v1/rerank，llm 模式拼 /v1/chat/completions）
   base_url: "https://xxx"
   # API Key
   api_key: "sk-xxx"
-  # 模型名称
+  # 模型名称（mode=llm 时填大模型名，如 qwen2.5:3b）
   model: "bge-reranker-v2-m3"
+  # 重排序模式：api（默认）/ llm / ollama
+  mode: "api"
   # 重排序后保留的结果数量
   top_n: 5
   # 最大重试次数
   max_retries: 3
   # 限流 QPS
   qps: 10
+  # ---- mode=llm 专用（预留配置，可不填）----
+  # 自定义打分 prompt 模板，占位符 {query}、{document}；留空使用内置默认模板
+  llm_prompt_template: ""
+  # 打分采样温度，默认 0（打分场景建议保持 0 保证确定性）
+  llm_temperature: 0
 
 # LLM 提供者配置（OpenAI 兼容 /v1/chat/completions，支持 GPT/豆包/DeepSeek/vLLM 等）
 llm:
-  # API 地址（本地模型时改为 Ollama/vLLM 地址，如 http://localhost:11434/v1）
+  # API 地址（OpenAI 兼容根地址，不要带 /v1 后缀；代码会自动拼接 /v1/chat/completions）
+  # 本地模型如 Ollama 填 http://localhost:11434，vLLM 填 http://localhost:8000
   base_url: "https://xxx"
   # API Key（本地模型可留空，省略鉴权头）
   api_key: "sk-xxx"
@@ -147,6 +157,11 @@ rag:
     routing: auto
     # 思考链路：off / on（RAG 中间过程分步展示）
     thinking: "on"
+    # 允许的数据源（数据源路由：vector_store / web_search）
+    # 空 = 默认仅 vector_store（私有性默认：不会路由到外部数据源）
+    # web_search 为占位数据源，未接入真实搜索引擎前不可用；接入后如
+    # data_sources: [vector_store, web_search] 即可允许 LLM 路由到 web
+    data_sources: []
   # 对话历史容量（超出丢弃最旧消息）
   history_capacity: 50
   # 注入生成请求的历史消息条数

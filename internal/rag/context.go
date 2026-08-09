@@ -10,10 +10,11 @@ import (
 
 // Source 引用来源
 type Source struct {
-	ID       string  `json:"id"`       // 检索片段 ID
-	Filename string  `json:"filename"` // 来源文件名（来自元数据）
-	Heading  string  `json:"heading"`  // 标题上下文
-	Score    float32 `json:"score"`    // 检索分数
+	ID         string  `json:"id"`                    // 检索片段 ID
+	Filename   string  `json:"filename"`              // 来源文件名（来自元数据）
+	Heading    string  `json:"heading"`               // 标题上下文
+	Score      float32 `json:"score"`                 // 检索分数
+	SourceType string  `json:"source_type,omitempty"` // 来源类型（vector_store / web_search 等）
 }
 
 // ContextItem 单条上下文（供模板渲染）
@@ -59,10 +60,11 @@ func buildContext(chunks []retriever.RetrieveResult, maxTokens int, maxChunks in
 		used += estimateTokens(formatContextItem(item))
 
 		sources = append(sources, Source{
-			ID:       chunk.ID,
-			Filename: item.Filename,
-			Heading:  item.Heading,
-			Score:    chunk.Score,
+			ID:         chunk.ID,
+			Filename:   item.Filename,
+			Heading:    item.Heading,
+			Score:      chunk.Score,
+			SourceType: metaString(chunk.Metadata, "source_type"),
 		})
 	}
 

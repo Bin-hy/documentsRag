@@ -99,3 +99,26 @@ func TestEstimateTokens(t *testing.T) {
 		t.Errorf("英文估算错误: %d", estimateTokens("hello world"))
 	}
 }
+
+// F8: 引用来源携带 source_type（来自 Metadata["source_type"]）
+func TestBuildContext_SourceType(t *testing.T) {
+	chunks := []retriever.RetrieveResult{
+		{ID: "v1", Content: "向量内容", Score: 0.9, Metadata: map[string]any{"source_type": "vector_store"}},
+		{ID: "w1", Content: "web内容", Score: 0.8, Metadata: map[string]any{"source_type": "web_search"}},
+		{ID: "n1", Content: "无来源标记", Score: 0.7},
+	}
+
+	_, sources := buildContext(chunks, 100000, 10)
+	if len(sources) != 3 {
+		t.Fatalf("sources 数量 = %d, want 3", len(sources))
+	}
+	if sources[0].SourceType != "vector_store" {
+		t.Errorf("sources[0].SourceType = %q, want vector_store", sources[0].SourceType)
+	}
+	if sources[1].SourceType != "web_search" {
+		t.Errorf("sources[1].SourceType = %q, want web_search", sources[1].SourceType)
+	}
+	if sources[2].SourceType != "" {
+		t.Errorf("无标记时 SourceType = %q, want 空", sources[2].SourceType)
+	}
+}

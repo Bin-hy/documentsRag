@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -41,12 +42,31 @@ type apiReranker struct {
 	limiter *rate.Limiter
 }
 
-// NewReranker 创建 Reranker（兼容 /v1/rerank 接口）
+// newLimiter 创建 QPS 限流器；qps<=0（配置缺省）时使用默认值 10，
+// 避免 rate.NewLimiter(0,0) 导致 Wait 无限阻塞
+func newLimiter(qps int) *rate.Limiter {
+	if qps <= 0 {
+		qps = 10
+	}
+	return rate.NewLimiter(rate.Limit(qps), qps)
+}
+
+// NewReranker 创建 Reranker
+// mode=api（默认）：调用 /v1/rerank 专用重排接口（Jina/Cohere/vLLM 等）
+// mode=llm / ollama：使用通用大模型 chat/completions 打分重排（无专用 rerank 端点的场景）
 func NewReranker(cfg config.RerankerConfig) Reranker {
+	switch strings.ToLower(cfg.Mode) {
+	case "llm", "ollama":
+		return NewLLMReranker(cfg)
+	case "", "api":
+		// 默认 api 模式
+	default:
+		slog.Warn("未知重排模式，回退 api 模式", "mode", cfg.Mode)
+	}
 	return &apiReranker{
 		config:  cfg,
 		client:  &http.Client{Timeout: 30 * time.Second},
-		limiter: rate.NewLimiter(rate.Limit(cfg.QPS), cfg.QPS),
+		limiter: newLimiter(cfg.QPS),
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
+	"github.com/Bin-hy/bin-rag/internal/datasource"
 	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/rag"
@@ -33,7 +34,11 @@ func BuildRuntime(
 	llmClient := llm.NewLLM(cfg.LLM)
 	rr := reranker.NewReranker(cfg.Reranker)
 	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
-	engine := rag.NewEngine(cfg.RAG, llmClient, rt, history, emb)
+	// 数据源注册中心：注册内置源（向量库可用 + web 占位）；后续 MCP/自定义数据源在此动态注册后注入
+	reg := datasource.NewRegistry()
+	reg.Register(datasource.NewVectorStoreSource(rt))
+	reg.Register(datasource.NewWebSearchSource())
+	engine := rag.NewEngine(cfg.RAG, llmClient, rt, history, emb, rag.WithSources(reg))
 
 	return &RuntimeComponents{
 		LLM:       llmClient,

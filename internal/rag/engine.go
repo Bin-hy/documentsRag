@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
+	"github.com/Bin-hy/bin-rag/internal/datasource"
 	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/retriever"
@@ -60,6 +62,9 @@ type AskOptions struct {
 	Thinking    bool                   // 本次请求是否请求思考链路（最终以 effective 三级合并为准，F9）
 	Sink        TraceSink              // 思考链路采集器（流式由 handler 注入；非流式 engine 自建 sliceSink）
 	ForceSingle bool                   // routing 判定 direct 时置位：本次查询强制 single（不对外配置）
+	// 内部字段（engine 内部设置，不对外配置）：
+	DataSource         string   // 路由判定后选中的数据源（vector_store / web_search），prepare 读取
+	AllowedDataSources []string // 允许的数据源集合（三层合并后），路由约束用
 }
 
 // AskOption 函数式问答选项
@@ -101,6 +106,16 @@ func withForceSingleIf(o *AskOptions) []AskOption {
 	return nil
 }
 
+// withDataSource 设置本次检索数据源（内部：Ask/StreamAsk 路由判定后传给 prepare）
+func withDataSource(name string) AskOption {
+	return func(o *AskOptions) { o.DataSource = name }
+}
+
+// withAllowedDataSources 设置允许的数据源集合（内部：供 prepare 白名单兜底校验）
+func withAllowedDataSources(names []string) AskOption {
+	return func(o *AskOptions) { o.AllowedDataSources = names }
+}
+
 // WithSink 注入思考链路采集器（流式：转发到 SSE 通道；非流式：传 nil 由 engine 自建）
 func WithSink(sink TraceSink) AskOption {
 	return func(o *AskOptions) { o.Sink = sink }
@@ -134,7 +149,16 @@ type RAGEngine struct {
 	retriever retriever.Retriever
 	history   HistoryStore
 	templates promptTemplates
-	embedder  embedding.Embedder // HyDE 用（nil 时 HyDE 禁用）
+	embedder  embedding.Embedder  // HyDE 用（nil 时 HyDE 禁用）
+	sources   datasource.Registry // 数据源注册中心（nil 时构建默认：vector_store + web 占位）
+}
+
+// EngineOption 引擎构造选项
+type EngineOption func(*RAGEngine)
+
+// WithSources 注入数据源注册中心（可动态注册自定义数据源；nil 用默认）
+func WithSources(reg datasource.Registry) EngineOption {
+	return func(e *RAGEngine) { e.sources = reg }
 }
 
 // ragCfgFor 返回请求级 RAG 配置（快照优先）
@@ -158,6 +182,7 @@ func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
 		// 旧开关兜底：从 *On() 推导；thinking 单独保留（不参与兜底判断，
 		// 否则仅配置 thinking 会阻断旧开关映射其他策略）
 		thinking := global.Thinking
+		dataSources := global.DataSources // 数据源允许集合独立于策略单值，兜底时保留
 		global = config.StrategyConfig{}
 		if ragCfg.MultiQueryOn() {
 			global.Query = "multi"
@@ -181,6 +206,7 @@ func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
 			global.HyDE = "on"
 		}
 		global.Thinking = thinking
+		global.DataSources = dataSources
 	}
 	var kb, req config.StrategyConfig
 	if o.KBStrategy != nil {
@@ -198,8 +224,8 @@ func (e *RAGEngine) effective(o AskOptions) EffectiveStrategy {
 }
 
 // NewEngine 创建 RAG 编排器
-func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs HistoryStore, emb embedding.Embedder) Engine {
-	return &RAGEngine{
+func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs HistoryStore, emb embedding.Embedder, opts ...EngineOption) Engine {
+	e := &RAGEngine{
 		cfg:       cfg,
 		llm:       l,
 		retriever: rt,
@@ -207,6 +233,61 @@ func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs Histo
 		templates: loadPromptTemplates(cfg),
 		embedder:  emb,
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	// 默认注册中心：向量库（可用）+ web 搜索（占位不可用）；外部可用 WithSources 注入自定义源
+	if e.sources == nil {
+		reg := datasource.NewRegistry()
+		reg.Register(datasource.NewVectorStoreSource(rt))
+		reg.Register(datasource.NewWebSearchSource())
+		e.sources = reg
+	}
+	return e
+}
+
+// resolveDataSource 解析本次查询实际使用的数据源：
+//   - candidate（LLM 路由输出）为空/未知 → vector_store
+//   - allowed（允许集合）非空且 candidate 不在其中 → allowed 首项（私有性强制，AC4）
+//   - 选中源未注册或不可用 → 降级：优先 allowed 内的可用源（含 vector_store）；allowed 空或全不可用 → vector_store（AC5，不中断请求）
+//
+// 返回 (源名, 源实例)。
+func (e *RAGEngine) resolveDataSource(allowed []string, candidate string) (string, datasource.Source) {
+	name := candidate
+	if name == "" || name == "auto" {
+		name = datasource.SourceVectorStore
+	}
+	if len(allowed) > 0 && !slices.Contains(allowed, name) {
+		name = allowed[0]
+	}
+	if src, ok := e.sources.Get(name); ok && src.Available() {
+		return name, src
+	}
+	// 候选不可用：降级目标优先在 allowed 集合内找可用源（保证不落到未授权源）
+	if len(allowed) > 0 {
+		for _, n := range allowed {
+			if s, ok2 := e.sources.Get(n); ok2 && s.Available() {
+				return n, s
+			}
+		}
+	}
+	// allowed 为空或 allowed 内全不可用 → 降级默认向量库（本地内部源，不涉及外部数据外泄；
+	// 输出显式告警暴露配置问题，服务可用性优先）
+	if _, ok := e.sources.Get(datasource.SourceVectorStore); !ok {
+		slog.Warn("数据源降级失败：默认向量库未注册", "allowed", allowed, "candidate", candidate)
+		return datasource.SourceVectorStore, nil
+	}
+	slog.Warn("允许的数据源均不可用，降级默认向量库", "allowed", allowed, "candidate", candidate)
+	def, _ := e.sources.Get(datasource.SourceVectorStore)
+	return datasource.SourceVectorStore, def
+}
+
+// allowedText 渲染允许的数据源说明文本（供路由模板约束 LLM 输出，F6）
+func allowedText(allowed []string) string {
+	if len(allowed) == 0 {
+		return datasource.SourceVectorStore + "（默认）"
+	}
+	return strings.Join(allowed, " / ")
 }
 
 // Ask 单轮问答：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
@@ -223,52 +304,68 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	slog.Info("生效策略", "query", eff.Query, "fusion", eff.Fusion, "decomposition", eff.Decomposition,
 		"step_back", eff.StepBack, "hyde", eff.HyDE, "routing", eff.Routing, "thinking", eff.Thinking)
 
-	// RAG 路由：判定复杂度 → 按 strategy 分流
+	// RAG 路由：判定复杂度、策略与数据源 → 按 strategy 分流
 	if eff.Routing == "auto" {
-		route, ok, err := e.routeQuery(ctx, question)
+		route, ok, err := e.routeQuery(ctx, question, allowedText(eff.DataSources))
 		strategy := ""
 		if err != nil || !ok {
 			strategy = e.ragCfgFor(o).RoutingFallback
 			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 		} else {
 			strategy = route.Strategy
-			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+			// 数据源解析：受限 allowed 约束（AC4）+ 不可用降级（AC5）
+			o.AllowedDataSources = eff.DataSources
+			dsName, _ := e.resolveDataSource(eff.DataSources, route.DataSource)
+			o.DataSource = dsName
+			if route.DataSource != "" && route.DataSource != dsName {
+				slog.Warn("数据源被约束或不可用，改用默认", "candidate", route.DataSource,
+					"allowed", eff.DataSources, "used", dsName)
+			}
+			slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy,
+				"data_source", dsName, "reasoning", route.Reasoning)
 			// 思考链路：路由判定（F2，判定失败不 Record）
 			recordStep(sink, ThinkingStep{
 				Type:  StepRouting,
 				Label: "路由判定",
-				Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
+				Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, DataSource: dsName, Reasoning: route.Reasoning},
 			})
 			// 路由 direct：简单问题直接检索——本次查询强制 single，跳过多查询改写（F-A1）
 			if strategy == "direct" {
 				o.ForceSingle = true
 			}
 		}
-		// 按策略分流：decomposition → 分解；multi_query → 多查询；direct → 常规（含现有策略分支）
-		if strategy == "decomposition" {
-			if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
-				return res, nil
-			}
-		} else if strategy == "multi_query" {
-			if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
-				return res, nil
+		// 按策略分流：decomposition → 分解；multi_query → 多查询；direct → 常规（含现有策略分支）。
+		// 非向量数据源（如 web_search）时跳过策略增强，走常规单次数据源检索（技术决策：搜哪与怎么搜不叠加）
+		if o.DataSource == "" || o.DataSource == datasource.SourceVectorStore {
+			if strategy == "decomposition" {
+				if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
+					return res, nil
+				}
+			} else if strategy == "multi_query" {
+				if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
+					return res, nil
+				}
 			}
 		}
 		// direct 或策略失败 → 落常规
 	}
 
-	if eff.Decomposition != "off" {
-		if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
-			return res, nil
-		}
-	} else if eff.StepBack == "on" {
-		if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
-			return res, nil
+	if o.DataSource == "" || o.DataSource == datasource.SourceVectorStore {
+		if eff.Decomposition != "off" {
+			if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
+				return res, nil
+			}
+		} else if eff.StepBack == "on" {
+			if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
+				return res, nil
+			}
 		}
 	}
 
 	prepareOpts := append(opts, WithSink(sink))
 	prepareOpts = append(prepareOpts, withForceSingleIf(&o)...)
+	prepareOpts = append(prepareOpts, withDataSource(o.DataSource))
+	prepareOpts = append(prepareOpts, withAllowedDataSources(o.AllowedDataSources))
 	messages, sources, err := e.prepare(ctx, sessionID, question, prepareOpts...)
 	if err != nil {
 		return nil, err
@@ -325,44 +422,58 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 
 		// 策略路径（含思考链路事件，均在 goroutine 内发送保证接收者就绪）
 		var strategyRes *RAGResult
-		// RAG 路由：判定复杂度 → 按 strategy 分流
+		// RAG 路由：判定复杂度、策略与数据源 → 按 strategy 分流
 		if eff.Routing == "auto" {
-			route, ok, err := e.routeQuery(ctx, question)
+			route, ok, err := e.routeQuery(ctx, question, allowedText(eff.DataSources))
 			strategy := ""
 			if err != nil || !ok {
 				strategy = e.ragCfgFor(o).RoutingFallback
 				slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 			} else {
 				strategy = route.Strategy
-				slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy, "reasoning", route.Reasoning)
+				// 数据源解析：受限 allowed 约束（AC4）+ 不可用降级（AC5）
+				o.AllowedDataSources = eff.DataSources
+				dsName, _ := e.resolveDataSource(eff.DataSources, route.DataSource)
+				o.DataSource = dsName
+				if route.DataSource != "" && route.DataSource != dsName {
+					slog.Warn("数据源被约束或不可用，改用默认", "candidate", route.DataSource,
+						"allowed", eff.DataSources, "used", dsName)
+				}
+				slog.Info("路由判定完成", "complexity", route.Complexity, "strategy", strategy,
+					"data_source", dsName, "reasoning", route.Reasoning)
 				// 思考链路：路由判定（F2，判定失败不 Record）
 				recordStep(sink, ThinkingStep{
 					Type:  StepRouting,
 					Label: "路由判定",
-					Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, Reasoning: route.Reasoning},
+					Data:  RoutingData{Complexity: route.Complexity, Strategy: route.Strategy, DataSource: dsName, Reasoning: route.Reasoning},
 				})
 				// 路由 direct：简单问题直接检索——本次查询强制 single，跳过多查询改写（F-A1）
 				if strategy == "direct" {
 					o.ForceSingle = true
 				}
 			}
-			if strategy == "decomposition" {
-				if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
-					strategyRes = res
-				}
-			} else if strategy == "multi_query" {
-				if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
-					strategyRes = res
+			// 非向量数据源时跳过策略分流，走常规单次数据源检索
+			if o.DataSource == "" || o.DataSource == datasource.SourceVectorStore {
+				if strategy == "decomposition" {
+					if res, ok2, err2 := e.tryDecompose(ctx, sessionID, question, o); err2 == nil && ok2 {
+						strategyRes = res
+					}
+				} else if strategy == "multi_query" {
+					if res, ok2, err2 := e.tryMultiQuery(ctx, sessionID, question, o); err2 == nil && ok2 {
+						strategyRes = res
+					}
 				}
 			}
 		}
-		if strategyRes == nil && eff.Decomposition != "off" {
-			if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
-				strategyRes = res
-			}
-		} else if strategyRes == nil && eff.StepBack == "on" {
-			if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
-				strategyRes = res
+		if strategyRes == nil && (o.DataSource == "" || o.DataSource == datasource.SourceVectorStore) {
+			if eff.Decomposition != "off" {
+				if res, ok, err := e.tryDecompose(ctx, sessionID, question, o); err == nil && ok {
+					strategyRes = res
+				}
+			} else if eff.StepBack == "on" {
+				if res, ok, err := e.tryStepBack(ctx, sessionID, question, o); err == nil && ok {
+					strategyRes = res
+				}
 			}
 		}
 
@@ -376,6 +487,8 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 
 		prepareOpts := append(opts, WithSink(sink))
 		prepareOpts = append(prepareOpts, withForceSingleIf(&o)...)
+		prepareOpts = append(prepareOpts, withDataSource(o.DataSource))
+		prepareOpts = append(prepareOpts, withAllowedDataSources(o.AllowedDataSources))
 		messages, sources, err := e.prepare(ctx, sessionID, question, prepareOpts...)
 		if err != nil {
 			sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
@@ -444,6 +557,16 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 	// routing 判定 direct：本次查询强制 single，跳过多查询改写与多路检索（F-A1）
 	if o.ForceSingle {
 		eff.Query = "single"
+	}
+	// 非向量数据源：强制单查询（不叠加多查询增强），由下方数据源检索统一处理
+	if o.DataSource != "" && o.DataSource != datasource.SourceVectorStore {
+		eff.Query = "single"
+	}
+	// 白名单兜底（私有性防御）：若调用方指定了允许集合，数据源不得超出集合
+	if o.DataSource != "" && o.DataSource != datasource.SourceVectorStore &&
+		len(o.AllowedDataSources) > 0 && !slices.Contains(o.AllowedDataSources, o.DataSource) {
+		slog.Warn("数据源超出允许集合，降级向量库", "data_source", o.DataSource, "allowed", o.AllowedDataSources)
+		o.DataSource = datasource.SourceVectorStore
 	}
 	sink := o.Sink // 思考链路采集器（由 Ask/StreamAsk 预先计算设置）
 	// 请求级配置快照（热重载一致性）：prepare 内 RAG 参数用快照
@@ -557,10 +680,31 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		}
 	}
 
-	// 检索（携带知识库范围）；HyDE 启用且非多查询路径时用 hydeSearch 增强
+	// 检索（携带知识库范围）；HyDE 启用且非多查询路径时用 hydeSearch 增强；
+	// 路由到非向量数据源时（o.DataSource 由 Ask/StreamAsk 设置）走数据源注册中心检索
 	retrieveStart := time.Now()
 	var chunks []retriever.RetrieveResult
-	if eff.HyDE == "on" && e.embedder != nil && eff.Query != "multi" {
+	if o.DataSource != "" && o.DataSource != datasource.SourceVectorStore {
+		src, ok := e.sources.Get(o.DataSource)
+		if !ok || !src.Available() {
+			// 源缺失/不可用：降级向量库（防御，正常已由路由段处理）
+			slog.Warn("数据源不可用，降级向量库", "data_source", o.DataSource)
+			chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{
+				Query:  query,
+				TopK:   ragCfg.TopK,
+				Filter: kbFilter(o.KBID),
+				Trace:  traceSinkForRequest(sink, query),
+			})
+		} else {
+			chunks, err = src.Search(ctx, datasource.SearchRequest{
+				Query:  query,
+				TopK:   ragCfg.TopK,
+				Filter: kbFilter(o.KBID),
+			})
+			slog.Info("数据源检索完成", "data_source", o.DataSource,
+				"检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
+		}
+	} else if eff.HyDE == "on" && e.embedder != nil && eff.Query != "multi" {
 		chunks, err = e.hydeSearch(ctx, query, o)
 	} else {
 		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{

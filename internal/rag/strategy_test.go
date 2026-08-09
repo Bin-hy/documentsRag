@@ -90,3 +90,45 @@ func TestValidateStrategyValid(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveStrategyDataSources(t *testing.T) {
+	global := config.StrategyConfig{DataSources: []string{"vector_store", "web_search"}}
+	kb := config.StrategyConfig{DataSources: []string{"vector_store"}}
+	req := config.StrategyConfig{DataSources: []string{"web_search"}}
+
+	// 请求覆盖 kb、kb 覆盖全局
+	eff, err := ResolveStrategy(global, kb, req)
+	if err != nil {
+		t.Fatalf("ResolveStrategy 失败: %v", err)
+	}
+	if len(eff.DataSources) != 1 || eff.DataSources[0] != "web_search" {
+		t.Errorf("req 应覆盖：DataSources = %v", eff.DataSources)
+	}
+
+	// kb 覆盖全局（req 未设置）
+	eff, err = ResolveStrategy(global, kb, config.StrategyConfig{})
+	if err != nil {
+		t.Fatalf("ResolveStrategy 失败: %v", err)
+	}
+	if len(eff.DataSources) != 1 || eff.DataSources[0] != "vector_store" {
+		t.Errorf("kb 应覆盖：DataSources = %v", eff.DataSources)
+	}
+
+	// 全局兜底（kb/req 未设置）
+	eff, err = ResolveStrategy(global, config.StrategyConfig{}, config.StrategyConfig{})
+	if err != nil {
+		t.Fatalf("ResolveStrategy 失败: %v", err)
+	}
+	if len(eff.DataSources) != 2 {
+		t.Errorf("全局应兜底：DataSources = %v", eff.DataSources)
+	}
+
+	// 全空 → nil（默认仅 vector_store）
+	eff, err = ResolveStrategy(config.StrategyConfig{}, config.StrategyConfig{}, config.StrategyConfig{})
+	if err != nil {
+		t.Fatalf("ResolveStrategy 失败: %v", err)
+	}
+	if eff.DataSources != nil {
+		t.Errorf("全空时 DataSources 应为 nil, got %v", eff.DataSources)
+	}
+}

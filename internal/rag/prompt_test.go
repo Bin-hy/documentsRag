@@ -97,3 +97,18 @@ func TestLoadPromptTemplates_FileMissing(t *testing.T) {
 		t.Errorf("文件缺失应降级默认模板: %q", tpls.system)
 	}
 }
+
+func TestRenderRoutingIncludesDataSource(t *testing.T) {
+	out, err := renderRouting("什么是RAG？", "vector_store（默认）", defaultRoutingTemplate)
+	if err != nil {
+		t.Fatalf("renderRouting 失败: %v", err)
+	}
+	for _, want := range []string{"data_source", "vector_store", "web_search", "vector_store（默认）"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("渲染结果缺少 %q", want)
+		}
+	}
+	if !strings.Contains(out, "什么是RAG？") {
+		t.Errorf("渲染结果缺少用户问题")
+	}
+}

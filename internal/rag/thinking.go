@@ -60,9 +60,10 @@ func recordStep(sink TraceSink, step ThinkingStep) {
 
 // RoutingData 路由判定
 type RoutingData struct {
-	Complexity string `json:"complexity"`          // simple / medium / complex
-	Strategy   string `json:"strategy"`            // direct / multi_query / decomposition
-	Reasoning  string `json:"reasoning,omitempty"` // 判定推理说明
+	Complexity string `json:"complexity"`            // simple / medium / complex
+	Strategy   string `json:"strategy"`              // direct / multi_query / decomposition
+	DataSource string `json:"data_source,omitempty"` // vector_store / web_search（路由选中的数据源）
+	Reasoning  string `json:"reasoning,omitempty"`   // 判定推理说明
 }
 
 // RewriteData 单查询改写（含失败降级）

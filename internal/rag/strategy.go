@@ -15,6 +15,8 @@ type EffectiveStrategy struct {
 	HyDE          string // off / on
 	Routing       string // off / auto
 	Thinking      string // off / on
+	// DataSources 允许的数据源（vector_store / web_search 等）；空=nil 表示默认仅 vector_store（私有性默认）
+	DataSources []string
 }
 
 // DefaultEffectiveStrategy 全局默认生效策略（与阶段一~三默认一致）
@@ -57,6 +59,15 @@ func ResolveStrategy(global, kb, req config.StrategyConfig) (EffectiveStrategy, 
 	eff.HyDE = pick(global.HyDE, kb.HyDE, req.HyDE, "off")
 	eff.Routing = pick(global.Routing, kb.Routing, req.Routing, "off")
 	eff.Thinking = pick(global.Thinking, kb.Thinking, req.Thinking, "off")
+
+	// DataSources 合并：请求 > 知识库 > 全局，高优先级非空覆盖；全空 → nil（默认仅 vector_store）
+	eff.DataSources = global.DataSources
+	if len(kb.DataSources) > 0 {
+		eff.DataSources = kb.DataSources
+	}
+	if len(req.DataSources) > 0 {
+		eff.DataSources = req.DataSources
+	}
 
 	if err := ValidateStrategy(eff); err != nil {
 		return eff, err
