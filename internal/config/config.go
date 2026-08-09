@@ -15,9 +15,20 @@ type Config struct {
 	Reranker    RerankerConfig    `yaml:"reranker"`
 	LLM         LLMConfig         `yaml:"llm"`
 	RAG         RAGConfig         `yaml:"rag"`
+	WebSearch   WebSearchConfig   `yaml:"web_search"` // 联网搜索（web_search 数据源 / 增强模式 tool-use）
 	Postgres    PostgresConfig    `yaml:"postgres"`
 	Server      ServerConfig      `yaml:"server"`
 	Loader      LoaderConfig      `yaml:"loader"`
+}
+
+// WebSearchConfig 联网搜索提供者配置
+type WebSearchConfig struct {
+	Provider string `yaml:"provider"` // 提供者：bocha（默认）
+	BaseURL  string `yaml:"base_url"` // 空 = 提供者官方地址
+	APIKey   string `yaml:"api_key"`  // 空 = 未就绪（Available()==false）
+	Count    int    `yaml:"count"`    // 默认 5
+	Timeout  int    `yaml:"timeout"`  // 秒，默认 30
+	QPS      int    `yaml:"qps"`      // 默认 1
 }
 
 // LoaderConfig 文档加载器配置
@@ -294,6 +305,19 @@ func (c *Config) applyDefaults() {
 	}
 	if c.LLM.MaxTokens <= 0 {
 		c.LLM.MaxTokens = 2048
+	}
+	// WebSearch 默认值
+	if c.WebSearch.Provider == "" {
+		c.WebSearch.Provider = "bocha"
+	}
+	if c.WebSearch.Count <= 0 {
+		c.WebSearch.Count = 5
+	}
+	if c.WebSearch.Timeout <= 0 {
+		c.WebSearch.Timeout = 30
+	}
+	if c.WebSearch.QPS <= 0 {
+		c.WebSearch.QPS = 1
 	}
 	// RAG 默认值
 	if c.RAG.TopK <= 0 {

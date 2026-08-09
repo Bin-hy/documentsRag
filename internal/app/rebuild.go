@@ -10,6 +10,7 @@ import (
 	"github.com/Bin-hy/bin-rag/internal/rag"
 	"github.com/Bin-hy/bin-rag/internal/reranker"
 	"github.com/Bin-hy/bin-rag/internal/retriever"
+	"github.com/Bin-hy/bin-rag/internal/search"
 	"github.com/Bin-hy/bin-rag/internal/vectorstore"
 )
 
@@ -38,7 +39,10 @@ func BuildRuntime(
 	reg := datasource.NewRegistry()
 	reg.Register(datasource.NewVectorStoreSource(rt))
 	reg.Register(datasource.NewWebSearchSource())
-	engine := rag.NewEngine(cfg.RAG, llmClient, rt, history, emb, rag.WithSources(reg))
+	// 联网搜索提供者（增强模式 web_search 工具；未配置 api_key 时不可用）
+	searchProvider := search.New(cfg.WebSearch)
+	engine := rag.NewEngine(cfg.RAG, llmClient, rt, history, emb,
+		rag.WithSources(reg), rag.WithSearchProvider(searchProvider))
 
 	return &RuntimeComponents{
 		LLM:       llmClient,

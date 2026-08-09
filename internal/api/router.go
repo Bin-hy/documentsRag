@@ -99,6 +99,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 
 	// 问答（stream=1 或 Accept: text/event-stream 时 SSE 流式）
 	v1.POST("/chat", h.ChatDispatch)
+	v1.GET("/chat/enhancements", h.Enhancements)
 	v1.GET("/chat/history", h.GetHistory)
 	v1.GET("/chunks/:id", h.GetChunk)
 

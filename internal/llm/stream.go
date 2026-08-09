@@ -102,11 +102,15 @@ func (l *openaiLLM) doStream(ctx context.Context, messages []Message, opts []Cha
 	return parseSSE(ctx, resp.Body, out, received)
 }
 
-// parseSSE 解析 text/event-stream 响应，将增量文本发到 out
+// parseSSE 解析 text/event-stream 响应，将增量文本发到 out；
+// 同时聚合流式 delta.tool_calls（按 index），在流结束时随 Done 片段一次性发出。
 func parseSSE(ctx context.Context, r io.Reader, out chan<- StreamChunk, received *bool) error {
 	scanner := bufio.NewScanner(r)
 	// 单个事件行可能很长，扩大缓冲区
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	// 流式 tool_calls 聚合（index → 分片）
+	toolCalls := map[int]*ToolCall{}
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -116,7 +120,7 @@ func parseSSE(ctx context.Context, r io.Reader, out chan<- StreamChunk, received
 
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
-			return sendChunk(ctx, out, StreamChunk{Done: true})
+			return finishSSE(ctx, out, received, toolCalls)
 		}
 
 		var resp chatCompletionResponse
@@ -124,10 +128,31 @@ func parseSSE(ctx context.Context, r io.Reader, out chan<- StreamChunk, received
 			return fmt.Errorf("解析 SSE 数据失败: %w", err)
 		}
 
-		if len(resp.Choices) > 0 && resp.Choices[0].Delta.Content != "" {
+		if len(resp.Choices) == 0 {
+			continue
+		}
+
+		delta := resp.Choices[0].Delta
+		if delta.Content != "" {
 			*received = true
-			if err := sendChunk(ctx, out, StreamChunk{Content: resp.Choices[0].Delta.Content}); err != nil {
+			if err := sendChunk(ctx, out, StreamChunk{Content: delta.Content}); err != nil {
 				return err
+			}
+		}
+		for _, part := range delta.ToolCalls {
+			tc, ok := toolCalls[part.Index]
+			if !ok {
+				tc = &ToolCall{}
+				toolCalls[part.Index] = tc
+			}
+			if part.ID != "" {
+				tc.ID = part.ID
+			}
+			if part.Function.Name != "" {
+				tc.Name = part.Function.Name
+			}
+			if part.Function.Arguments != "" {
+				tc.Arguments += part.Function.Arguments
 			}
 		}
 	}
@@ -137,8 +162,29 @@ func parseSSE(ctx context.Context, r io.Reader, out chan<- StreamChunk, received
 	}
 
 	// 流正常结束但未收到 [DONE]（部分服务端行为），视为正常结束
-	_ = sendChunk(ctx, out, StreamChunk{Done: true})
-	return nil
+	return finishSSE(ctx, out, received, toolCalls)
+}
+
+// finishSSE 发送流结束片段；存在聚合的工具调用时随 Done 一起发出
+func finishSSE(ctx context.Context, out chan<- StreamChunk, received *bool, toolCalls map[int]*ToolCall) error {
+	if len(toolCalls) > 0 {
+		*received = true
+		// index 可能稀疏（跳号），按最大 index 顺序输出，缺失的 index 跳过
+		maxIndex := 0
+		for i := range toolCalls {
+			if i > maxIndex {
+				maxIndex = i
+			}
+		}
+		ordered := make([]ToolCall, 0, len(toolCalls))
+		for i := 0; i <= maxIndex; i++ {
+			if tc, ok := toolCalls[i]; ok {
+				ordered = append(ordered, *tc)
+			}
+		}
+		return sendChunk(ctx, out, StreamChunk{ToolCalls: ordered, Done: true})
+	}
+	return sendChunk(ctx, out, StreamChunk{Done: true})
 }
 
 // sendChunk 发送片段；ctx 取消时返回 ctx.Err()

@@ -13,6 +13,7 @@ import type {
   RoutingData,
   StepBackData,
   ThinkingStep,
+  ToolStepData,
 } from '../api/types'
 
 const props = defineProps<{ steps: ThinkingStep[] }>()
@@ -33,6 +34,7 @@ const typeLabels: Record<string, string> = {
   decompose: '问题分解',
   step_back: '回退查询',
   hyde: 'HyDE 假设文档',
+  tool: '工具调用',
 }
 
 function labelOf(step: ThinkingStep): string {
@@ -189,6 +191,22 @@ function toggleChunk(i: number) {
         <div v-else-if="step.type === 'hyde'" class="step-data">
           <template v-if="is(step.data, 'hypo_doc')">
             <div class="hypo-doc">{{ as<HyDEData>(step.data).hypo_doc }}</div>
+          </template>
+        </div>
+
+        <!-- 工具调用（增强模式 function calling） -->
+        <div v-else-if="step.type === 'tool'" class="step-data">
+          <template v-if="is(step.data, 'name')">
+            <div class="kv"><span class="k">工具</span><span class="v">{{ as<ToolStepData>(step.data).name }}</span></div>
+            <div v-if="as<ToolStepData>(step.data).args" class="kv">
+              <span class="k">参数</span><span class="v">{{ as<ToolStepData>(step.data).args }}</span>
+            </div>
+            <div v-if="as<ToolStepData>(step.data).result" class="kv">
+              <span class="k">结果</span><span class="v">{{ as<ToolStepData>(step.data).result }}</span>
+            </div>
+            <div v-if="as<ToolStepData>(step.data).error" class="kv">
+              <span class="k">错误</span><span class="v">{{ as<ToolStepData>(step.data).error }}</span>
+            </div>
           </template>
         </div>
       </div>

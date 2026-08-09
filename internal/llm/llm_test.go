@@ -108,7 +108,9 @@ func TestGenerate_MessagesPassed(t *testing.T) {
 		t.Fatalf("消息数量错误: got %d want %d", len(gotMessages), len(want))
 	}
 	for i := range want {
-		if gotMessages[i] != want[i] {
+		if gotMessages[i].Role != want[i].Role || gotMessages[i].Content != want[i].Content ||
+			gotMessages[i].Sources != want[i].Sources || gotMessages[i].ToolCallID != want[i].ToolCallID ||
+			len(gotMessages[i].ToolCalls) != len(want[i].ToolCalls) {
 			t.Errorf("消息[%d]错误: got %+v want %+v", i, gotMessages[i], want[i])
 		}
 	}
@@ -373,5 +375,93 @@ func TestStreamGenerate_ErrorAfterFirstDelta(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("收到 delta 后不应重试: got %d want 1", count)
+	}
+}
+
+// function calling：请求体含 tools 字段，响应 tool_calls 被正确解析
+func TestGenerateTool_ToolCallsParsed(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := decodeRequest(t, r)
+		if len(req.Tools) == 0 {
+			t.Fatalf("请求体应包含 tools")
+		}
+		tool := req.Tools[0]
+		if tool["type"] != "function" {
+			t.Errorf("tool type = %v, want function", tool["type"])
+		}
+		fn, _ := tool["function"].(map[string]any)
+		if fn["name"] != "web_search" {
+			t.Errorf("tool 名称 = %v, want web_search", fn["name"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"RAG 召回\"}"}}]}}]}`)
+	}))
+	defer server.Close()
+
+	client := NewLLM(testConfig(server.URL)).(*openaiLLM)
+	resp, err := client.GenerateTool(context.Background(), []Message{{Role: RoleUser, Content: "查一下"}}, []FunctionTool{
+		{Name: "web_search", Description: "联网搜索", Parameters: map[string]any{"type": "object"}},
+	})
+	if err != nil {
+		t.Fatalf("GenerateTool 失败: %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("ToolCalls 数量 = %d, want 1", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Name != "web_search" || !strings.Contains(tc.Arguments, "RAG 召回") {
+		t.Errorf("ToolCall 解析错误: %+v", tc)
+	}
+}
+
+// function calling：模型未请求工具时返回正文
+func TestGenerateTool_PlainContent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"直接回答"}}]}`)
+	}))
+	defer server.Close()
+
+	client := NewLLM(testConfig(server.URL)).(*openaiLLM)
+	resp, err := client.GenerateTool(context.Background(), []Message{{Role: RoleUser, Content: "hi"}}, []FunctionTool{{Name: "web_search"}})
+	if err != nil {
+		t.Fatalf("GenerateTool 失败: %v", err)
+	}
+	if resp.Content != "直接回答" || len(resp.ToolCalls) != 0 {
+		t.Errorf("resp = %+v, want content=直接回答 且无工具调用", resp)
+	}
+}
+
+// 流式：delta.tool_calls 分片按 index 聚合，Done 片段携带完整 ToolCalls
+func TestStreamGenerate_ToolCallsAggregated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		body := "" +
+			"data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_9\",\"type\":\"function\",\"function\":{\"name\":\"web_search\",\"arguments\":\"\"}}]}}]}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"query\\\":\\\"RAG\\\"\"}}]}}]}\n\n" +
+			"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}\n\n" +
+			"data: [DONE]\n\n"
+		fmt.Fprint(w, body)
+	}))
+	defer server.Close()
+
+	client := NewLLM(testConfig(server.URL)).(*openaiLLM)
+	ch, err := client.StreamGenerate(context.Background(), []Message{{Role: RoleUser, Content: "q"}})
+	if err != nil {
+		t.Fatalf("StreamGenerate 失败: %v", err)
+	}
+
+	var done StreamChunk
+	for c := range ch {
+		if c.Done {
+			done = c
+		}
+	}
+	if len(done.ToolCalls) != 1 {
+		t.Fatalf("Done 片段 ToolCalls = %+v, want 1 条", done.ToolCalls)
+	}
+	tc := done.ToolCalls[0]
+	if tc.ID != "call_9" || tc.Name != "web_search" || tc.Arguments != `{"query":"RAG"}` {
+		t.Errorf("流式 ToolCall 聚合错误: %+v", tc)
 	}
 }

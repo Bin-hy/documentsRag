@@ -44,6 +44,7 @@ export const useChatStore = defineStore('chat', {
     messages: [] as LocalMessage[],
     streaming: false,
     abortController: null as AbortController | null,
+    enhanced: false, // 增强模式开关（联网搜索等）
   }),
 
   getters: {
@@ -131,6 +132,7 @@ export const useChatStore = defineStore('chat', {
             session_id: sessionId,
             question,
             kb_id: this.activeSession?.kbId ?? '',
+            enhanced: this.enhanced,
           },
           (ev) => {
             switch (ev.type) {

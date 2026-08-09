@@ -144,3 +144,36 @@ describe('chatStore 降级状态机', () => {
     expect(store.streaming).toBe(false) // 结束后恢复发送
   })
 })
+
+describe('chatStore 增强模式', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorage.clear()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('增强开关开启时请求体携带 enhanced=true', async () => {
+    const store = useChatStore()
+    store.newSession()
+    store.enhanced = true
+    const spy = mockStream([{ type: 'done' }])
+
+    await store.send('问题')
+
+    const req = spy.mock.calls[0][0] as import('../api/types').ChatRequest
+    expect(req.enhanced).toBe(true)
+  })
+
+  it('默认关闭时请求体 enhanced=false', async () => {
+    const store = useChatStore()
+    store.newSession()
+    const spy = mockStream([{ type: 'done' }])
+
+    await store.send('问题')
+
+    const req = spy.mock.calls[0][0] as import('../api/types').ChatRequest
+    expect(req.enhanced).toBe(false)
+  })
+})

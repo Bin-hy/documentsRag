@@ -14,6 +14,7 @@ import (
 	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/retriever"
+	"github.com/Bin-hy/bin-rag/internal/search"
 )
 
 // noAnswerText 检索结果为空时的兜底回答
@@ -62,6 +63,7 @@ type AskOptions struct {
 	Thinking    bool                   // 本次请求是否请求思考链路（最终以 effective 三级合并为准，F9）
 	Sink        TraceSink              // 思考链路采集器（流式由 handler 注入；非流式 engine 自建 sliceSink）
 	ForceSingle bool                   // routing 判定 direct 时置位：本次查询强制 single（不对外配置）
+	Enhanced    bool                   // 增强模式：启用 function calling 工具（如 web_search）
 	// 内部字段（engine 内部设置，不对外配置）：
 	DataSource         string   // 路由判定后选中的数据源（vector_store / web_search），prepare 读取
 	AllowedDataSources []string // 允许的数据源集合（三层合并后），路由约束用
@@ -91,6 +93,11 @@ func WithConfigSnapshot(cfg *config.Config) AskOption {
 // WithThinking 请求本次问答启用思考链路（最终开关 = 三级合并策略的 thinking=on 且此值为 true）
 func WithThinking(on bool) AskOption {
 	return func(o *AskOptions) { o.Thinking = on }
+}
+
+// WithEnhanced 启用增强模式（function calling 工具，如 web_search）
+func WithEnhanced(on bool) AskOption {
+	return func(o *AskOptions) { o.Enhanced = on }
 }
 
 // withForceSingle 仅供 engine 内部使用：routing 判定 direct 时强制本次查询 single（F-A1）
@@ -144,13 +151,15 @@ func withThinking(o *AskOptions, res *RAGResult) *RAGResult {
 
 // RAGEngine 编排实现：历史 → 改写 → 检索 → 组装 → 生成 → 落历史
 type RAGEngine struct {
-	cfg       config.RAGConfig
-	llm       llm.LLM
-	retriever retriever.Retriever
-	history   HistoryStore
-	templates promptTemplates
-	embedder  embedding.Embedder  // HyDE 用（nil 时 HyDE 禁用）
-	sources   datasource.Registry // 数据源注册中心（nil 时构建默认：vector_store + web 占位）
+	cfg            config.RAGConfig
+	llm            llm.LLM
+	retriever      retriever.Retriever
+	history        HistoryStore
+	templates      promptTemplates
+	embedder       embedding.Embedder  // HyDE 用（nil 时 HyDE 禁用）
+	sources        datasource.Registry // 数据源注册中心（nil 时构建默认：vector_store + web 占位）
+	tools          ToolRegistry        // 增强模式工具注册中心（nil 时构建默认，无工具）
+	searchProvider search.Provider     // 联网搜索提供者（nil = 增强 web_search 不可用）
 }
 
 // EngineOption 引擎构造选项
@@ -159,6 +168,16 @@ type EngineOption func(*RAGEngine)
 // WithSources 注入数据源注册中心（可动态注册自定义数据源；nil 用默认）
 func WithSources(reg datasource.Registry) EngineOption {
 	return func(e *RAGEngine) { e.sources = reg }
+}
+
+// WithTools 注入工具注册中心（增强模式 function calling；nil 用默认空注册中心）
+func WithTools(reg ToolRegistry) EngineOption {
+	return func(e *RAGEngine) { e.tools = reg }
+}
+
+// WithSearchProvider 注入联网搜索提供者（可用时自动注册 web_search 工具）
+func WithSearchProvider(p search.Provider) EngineOption {
+	return func(e *RAGEngine) { e.searchProvider = p }
 }
 
 // ragCfgFor 返回请求级 RAG 配置（快照优先）
@@ -243,7 +262,91 @@ func NewEngine(cfg config.RAGConfig, l llm.LLM, rt retriever.Retriever, hs Histo
 		reg.Register(datasource.NewWebSearchSource())
 		e.sources = reg
 	}
+	// 增强模式工具：默认空注册中心；联网搜索提供者可用时自动注册 web_search 工具
+	if e.tools == nil {
+		e.tools = NewToolRegistry()
+	}
+	if e.searchProvider != nil && e.searchProvider.Available() {
+		e.tools.Register(NewWebSearchTool(e.searchProvider))
+	}
 	return e
+}
+
+// runToolLoop 增强模式工具循环：LLM 可多次请求工具（上限 maxToolRounds 防死循环），
+// 工具结果以 role=tool 消息回传；循环结束返回含最终 assistant 回答的消息序列。
+// 私有性约束：tools 按 o.AllowedDataSources 过滤（非空且不含该工具名 → 不注册）；
+// allowed 为空（未配置）时，增强模式开启即视为授权 web_search 等工具。
+func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o AskOptions, sink TraceSink) ([]llm.Message, error) {
+	// 按允许的数据源过滤工具（私有性：allowed 非空时仅允许集合内的工具）
+	var tools []Tool
+	for _, t := range e.tools.List() {
+		if len(o.AllowedDataSources) > 0 && !slices.Contains(o.AllowedDataSources, t.Name()) {
+			continue
+		}
+		tools = append(tools, t)
+	}
+	if len(tools) == 0 {
+		return messages, nil // 无可用工具（或全部被 allowed 过滤），调用方回退普通生成
+	}
+
+	funcTools := make([]llm.FunctionTool, 0, len(tools))
+	for _, t := range tools {
+		funcTools = append(funcTools, llm.FunctionTool{
+			Name:        t.Name(),
+			Description: t.Description(),
+			Parameters:  t.Parameters(),
+		})
+	}
+
+	for round := 0; round < maxToolRounds; round++ {
+		resp, err := e.llm.GenerateTool(ctx, messages, funcTools)
+		if err != nil {
+			return nil, fmt.Errorf("增强模式生成失败: %w", err)
+		}
+		if len(resp.ToolCalls) == 0 {
+			messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: resp.Content})
+			return messages, nil
+		}
+
+		// OpenAI 标准格式：一条 assistant 消息携带本轮全部 tool_calls，再逐条 tool 结果
+		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls}
+		messages = append(messages, assistantMsg)
+
+		for _, tc := range resp.ToolCalls {
+			tool, ok := e.tools.Get(tc.Name)
+			if !ok {
+				recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用",
+					Data: ToolStepData{Name: tc.Name, Args: tc.Arguments, Error: "未知工具"}})
+				messages = append(messages,
+					llm.Message{Role: llm.RoleTool, ToolCallID: tc.ID, Content: "错误: 未知工具 " + tc.Name})
+				continue
+			}
+
+			result, err := tool.Execute(ctx, tc.Arguments)
+			if err != nil {
+				recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用",
+					Data: ToolStepData{Name: tc.Name, Args: tc.Arguments, Error: err.Error()}})
+				result = "错误: " + err.Error()
+			} else {
+				recordStep(sink, ThinkingStep{Type: StepTool, Label: "工具调用",
+					Data: ToolStepData{Name: tc.Name, Args: tc.Arguments, Result: truncateRunes(result, maxToolResultPreviewLen)}})
+			}
+			messages = append(messages,
+				llm.Message{Role: llm.RoleTool, ToolCallID: tc.ID, Content: result})
+		}
+	}
+
+	// 超过轮次上限：最后一次生成取正文兜底；仍无正文（模型继续请求工具）时用兜底文案
+	resp, err := e.llm.GenerateTool(ctx, messages, funcTools)
+	if err != nil {
+		return nil, err
+	}
+	content := resp.Content
+	if content == "" {
+		content = noAnswerText
+	}
+	messages = append(messages, llm.Message{Role: llm.RoleAssistant, Content: content})
+	return messages, nil
 }
 
 // resolveDataSource 解析本次查询实际使用的数据源：
@@ -379,11 +482,29 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 	}
 
 	start := time.Now()
-	answer, err := e.llm.Generate(ctx, messages)
-	if err != nil {
-		return nil, err
+	var answer string
+	if o.Enhanced {
+		// 增强模式：tool loop（LLM 可调用 web_search 等工具），最终回答取自消息序列末条；
+		// 无可用工具时回退普通生成
+		msgs, err := e.runToolLoop(ctx, messages, o, sink)
+		if err != nil {
+			return nil, err
+		}
+		if last := msgs[len(msgs)-1]; last.Role == llm.RoleAssistant {
+			answer = last.Content
+		} else {
+			answer, err = e.llm.Generate(ctx, messages)
+			if err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		answer, err = e.llm.Generate(ctx, messages)
+		if err != nil {
+			return nil, err
+		}
 	}
-	slog.Info("RAG 生成完成", "session", sessionID, "生成耗时ms", time.Since(start).Milliseconds())
+	slog.Info("RAG 生成完成", "session", sessionID, "生成耗时ms", time.Since(start).Milliseconds(), "enhanced", o.Enhanced)
 
 	e.appendHistory(sessionID, llm.RoleUser, question, "")
 	e.appendHistory(sessionID, llm.RoleAssistant, answer, marshalSources(sources))
@@ -495,9 +616,28 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 			return
 		}
 
+		// 增强模式：先静默完成 tool loop（thinking 事件在 sources 之前发出），
+		// 最终回答一次性发出；无可用工具时回退下方普通流式
+		if o.Enhanced {
+			msgs, err := e.runToolLoop(ctx, messages, o, sink)
+			if err != nil {
+				sendEvent(ctx, out, StreamEvent{Type: EventError, Err: err})
+				return
+			}
+			if last := msgs[len(msgs)-1]; last.Role == llm.RoleAssistant {
+				sendEvent(ctx, out, StreamEvent{Type: EventSources, Sources: sources})
+				sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: last.Content})
+				e.appendHistory(sessionID, llm.RoleUser, question, "")
+				e.appendHistory(sessionID, llm.RoleAssistant, last.Content, marshalSources(sources))
+				sendEvent(ctx, out, StreamEvent{Type: EventDone})
+				return
+			}
+			// 无可用工具：回退普通流式路径
+		}
+
 		sendEvent(ctx, out, StreamEvent{Type: EventSources, Sources: sources})
 
-		// 检索结果为空：直接兜底回答
+		// 检索结果为空：直接兜底回答（增强模式且无工具时同样兜底；增强 + 有工具已在上面走完）
 		if len(sources) == 0 {
 			sendEvent(ctx, out, StreamEvent{Type: EventChunk, Content: noAnswerText})
 			e.appendHistory(sessionID, llm.RoleUser, question, "")

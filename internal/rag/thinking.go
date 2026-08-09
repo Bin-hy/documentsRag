@@ -20,6 +20,7 @@ const (
 	StepDecompose  ThinkingStepType = "decompose"     // 分解判定 + 子问题列表
 	StepStepBack   ThinkingStepType = "step_back"     // 回退问题
 	StepHyDE       ThinkingStepType = "hyde"          // 假设文档
+	StepTool       ThinkingStepType = "tool"          // 工具调用（增强模式 function calling）
 )
 
 // ThinkingStep 思考链路环节（JSON 直接序列化给前端）
@@ -136,6 +137,14 @@ type StepBackData struct {
 // HyDEData HyDE 假设文档（服务端截断，N3）
 type HyDEData struct {
 	HypoDoc string `json:"hypo_doc"`
+}
+
+// ToolStepData 工具调用数据（增强模式 function calling）
+type ToolStepData struct {
+	Name   string `json:"name"`             // 工具名
+	Args   string `json:"args,omitempty"`   // 调用参数 JSON
+	Result string `json:"result,omitempty"` // 结果摘要（截断）
+	Error  string `json:"error,omitempty"`  // 执行错误（非空表示失败）
 }
 
 // maxHypoDocPreviewLen HyDE 假设文档预览最大字符数（N3）

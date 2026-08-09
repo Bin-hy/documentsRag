@@ -151,6 +151,14 @@ export interface HyDEData {
   hypo_doc: string
 }
 
+// 工具调用（增强模式 function calling）
+export interface ToolStepData {
+  name: string
+  args?: string
+  result?: string
+  error?: string
+}
+
 export interface ThinkingStep {
   type: string
   label: string
@@ -175,6 +183,7 @@ export interface ChatRequest {
   question: string
   kb_id: string // 知识库范围，空表示不限定
   strategy?: StrategyConfig // 单次请求策略覆盖
+  enhanced?: boolean // 增强模式（联网搜索等 function calling 工具）
 }
 
 // SSE 事件（后端序列：thinking×N → sources → chunk×N → done，或 error）

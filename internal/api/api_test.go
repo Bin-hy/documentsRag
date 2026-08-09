@@ -1088,3 +1088,69 @@ func TestChatSSEThinking(t *testing.T) {
 		t.Errorf("thinking 事件应在 sources 之前:\n%s", body)
 	}
 }
+
+// 增强模式：enhanced=true 透传到 engine AskOption
+func TestChatEnhancedPassThrough(t *testing.T) {
+	env := newTestEnv(t)
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]any{"session_id": "s1", "question": "最新消息是什么？", "enhanced": true}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	env.engine.mu.Lock()
+	var o rag.AskOptions
+	for _, opt := range env.engine.lastAskOpts {
+		opt(&o)
+	}
+	env.engine.mu.Unlock()
+	if !o.Enhanced {
+		t.Errorf("enhanced=true 未透传到 engine（o.Enhanced=%v）", o.Enhanced)
+	}
+}
+
+// 增强模式：默认不传 enhanced → 不启用
+func TestChatEnhancedDefaultOff(t *testing.T) {
+	env := newTestEnv(t)
+
+	doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]string{"session_id": "s1", "question": "普通问题"}, testAPIKey)
+
+	env.engine.mu.Lock()
+	var o rag.AskOptions
+	for _, opt := range env.engine.lastAskOpts {
+		opt(&o)
+	}
+	env.engine.mu.Unlock()
+	if o.Enhanced {
+		t.Errorf("默认不应启用增强模式（o.Enhanced=%v）", o.Enhanced)
+	}
+}
+
+// 增强能力列表接口：返回 web_search 能力（无 cfgMgr 时 available=false）
+func TestChatEnhancements(t *testing.T) {
+	env := newTestEnv(t)
+
+	w := doReq(t, env.router, "GET", "/api/v1/chat/enhancements", nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	resp := decodeResp(t, w)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("响应数据错误: %+v", resp.Data)
+	}
+	list, ok := data["enhancements"].([]any)
+	if !ok || len(list) == 0 {
+		t.Fatalf("enhancements 列表错误: %+v", data)
+	}
+	first, ok := list[0].(map[string]any)
+	if !ok || first["key"] != "web_search" {
+		t.Errorf("首个能力应为 web_search: %+v", list[0])
+	}
+	if first["available"] != false {
+		t.Errorf("无 cfgMgr 时 available 应为 false: %+v", first)
+	}
+}

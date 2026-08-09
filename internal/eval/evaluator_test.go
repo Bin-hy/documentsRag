@@ -111,6 +111,15 @@ func (f *fakeLLM) StreamGenerate(ctx context.Context, messages []llm.Message, op
 	return nil, nil
 }
 
+// GenerateTool 评估场景不涉及工具调用，转发普通生成
+func (f *fakeLLM) GenerateTool(ctx context.Context, messages []llm.Message, tools []llm.FunctionTool, opts ...llm.ChatOption) (*llm.ToolResponse, error) {
+	content, err := f.Generate(ctx, messages, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return &llm.ToolResponse{Content: content}, nil
+}
+
 func testDataset() *Dataset {
 	return &Dataset{Name: "测试集", Samples: []EvalSample{
 		{Question: "Q1", Answer: "A1", ExpectedIDs: []string{"c1"}},

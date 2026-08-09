@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 对话页：会话侧栏 + 消息区 + 输入区（知识库选择 / 流式停止）
+// 对话页：会话侧栏 + 消息区 + 输入区（知识库选择 / 增强面板 / 流式停止）
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { Promotion, VideoPause } from '@element-plus/icons-vue'
 import { useChatStore } from '../stores/chat'
@@ -14,6 +14,29 @@ const question = ref('')
 const messageAreaRef = ref<HTMLDivElement>()
 
 const selectedKbId = ref('')
+
+// 增强能力可用性（来自 GET /api/v1/chat/enhancements）
+const webSearchAvailable = ref(false)
+
+async function loadEnhancements() {
+  try {
+    const resp = await fetch('/api/v1/chat/enhancements', {
+      headers: { Authorization: `Bearer ${localStorage.getItem('api_key') ?? ''}` },
+    })
+    if (!resp.ok) return
+    const body = await resp.json()
+    const list: Array<{ key: string; available: boolean }> = body?.data?.enhancements ?? []
+    const web = list.find((e) => e.key === 'web_search')
+    webSearchAvailable.value = web?.available ?? false
+    if (!webSearchAvailable.value) {
+      chatStore.enhanced = false // 不可用时强制关闭
+    }
+  } catch {
+    /* 忽略：拉取失败按不可用处理 */
+  }
+}
+
+onMounted(loadEnhancements)
 
 async function scrollToBottom() {
   await nextTick()
@@ -148,6 +171,18 @@ onMounted(async () => {
             发送
           </el-button>
         </div>
+        <div class="enhance-bar">
+          <el-checkbox
+            v-model="chatStore.enhanced"
+            :disabled="chatStore.streaming || !webSearchAvailable"
+            class="enhance-toggle"
+          >
+            增强：联网搜索
+          </el-checkbox>
+          <span class="enhance-tip br-muted">
+            {{ webSearchAvailable ? '开启后回答可联网检索知识库外的最新信息' : '未配置联网搜索密钥（web_search.api_key），暂不可用' }}
+          </span>
+        </div>
         <p class="input-hint br-muted">内容由 AI 生成，请核实关键信息；引用来源可在回答下方查看</p>
       </div>
     </div>
@@ -216,5 +251,21 @@ onMounted(async () => {
   margin: 8px 0 0;
   font-size: 12px;
   text-align: center;
+}
+
+.enhance-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 0 4px;
+}
+
+.enhance-toggle {
+  --el-checkbox-font-size: 12px;
+}
+
+.enhance-tip {
+  font-size: 12px;
 }
 </style>

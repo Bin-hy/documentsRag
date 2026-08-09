@@ -19,6 +19,7 @@ type fakeLLM struct {
 	mu          sync.Mutex
 	genFunc     func(ctx context.Context, messages []llm.Message) (string, error)
 	streamFunc  func(ctx context.Context, messages []llm.Message) (<-chan llm.StreamChunk, error)
+	toolFunc    func(ctx context.Context, messages []llm.Message, tools []llm.FunctionTool) (*llm.ToolResponse, error) // 非 nil 时 GenerateTool 用它
 	genCalls    int
 	streamCalls int
 	genMessages [][]llm.Message // 每次 Generate 收到的消息
@@ -39,6 +40,26 @@ func (f *fakeLLM) StreamGenerate(ctx context.Context, messages []llm.Message, _ 
 	f.streamCalls++
 	f.mu.Unlock()
 	return f.streamFunc(ctx, messages)
+}
+
+// GenerateTool 带工具生成：toolFunc 非 nil 时用它（模拟模型返回工具调用），否则回退普通生成
+func (f *fakeLLM) GenerateTool(ctx context.Context, messages []llm.Message, tools []llm.FunctionTool, _ ...llm.ChatOption) (*llm.ToolResponse, error) {
+	f.mu.Lock()
+	f.genCalls++
+	cp := make([]llm.Message, len(messages))
+	copy(cp, messages)
+	f.genMessages = append(f.genMessages, cp)
+	tf := f.toolFunc
+	f.mu.Unlock()
+
+	if tf != nil {
+		return tf(ctx, messages, tools)
+	}
+	content, err := f.genFunc(ctx, messages)
+	if err != nil {
+		return nil, err
+	}
+	return &llm.ToolResponse{Content: content}, nil
 }
 
 // fakeRetriever 实现 retriever.Retriever 接口

@@ -171,6 +171,21 @@ rag:
   context_template_path: ""
   rewrite_template_path: ""
 
+# 联网搜索配置（增强模式 web_search tool-use / 数据源）
+web_search:
+  # 提供者：bocha（第一版）
+  provider: "bocha"
+  # API 地址（留空使用提供者官方地址）
+  base_url: ""
+  # API Key（留空 = 未就绪，增强面板标记不可用）
+  api_key: ""
+  # 单次搜索返回条数
+  count: 5
+  # 请求超时（秒）
+  timeout: 30
+  # 限流 QPS
+  qps: 1
+
 # 元数据存储（PostgreSQL）
 postgres:
   # 连接串（docker-compose 默认账号）

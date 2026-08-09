@@ -16,6 +16,7 @@ type chatRequest struct {
 	Question  string                 `json:"question" binding:"required"`
 	KBID      string                 `json:"kb_id"`              // 知识库范围，空表示不限定
 	Strategy  *config.StrategyConfig `json:"strategy,omitempty"` // 单次请求策略覆盖
+	Enhanced  bool                   `json:"enhanced,omitempty"` // 增强模式（function calling 工具，如 web_search）
 }
 
 // Chat 普通问答（返回回答与引用来源）
@@ -51,7 +52,7 @@ func (h *handler) Chat(c *gin.Context) {
 	}
 	result, err := eng.Ask(c.Request.Context(), req.SessionID, req.Question,
 		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
-		rag.WithConfigSnapshot(snap), rag.WithThinking(true))
+		rag.WithConfigSnapshot(snap), rag.WithThinking(true), rag.WithEnhanced(req.Enhanced))
 	if err != nil {
 		Fail(c, CodeInternal, "问答失败: "+err.Error())
 		return
@@ -89,7 +90,7 @@ func (h *handler) ChatStream(c *gin.Context) {
 	// 思考链路：thinking 事件由 engine 内部转发到事件流（开启时），此处只做分发（G2）
 	events, err := h.engine().StreamAsk(c.Request.Context(), req.SessionID, req.Question,
 		rag.WithKBID(req.KBID), rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
-		rag.WithConfigSnapshot(h.cfgSnapshot()), rag.WithThinking(true))
+		rag.WithConfigSnapshot(h.cfgSnapshot()), rag.WithThinking(true), rag.WithEnhanced(req.Enhanced))
 	if err != nil {
 		Fail(c, CodeInternal, "启动流式问答失败: "+err.Error())
 		return
@@ -127,4 +128,29 @@ func isStreamRequest(c *gin.Context) bool {
 	}
 	accept := c.GetHeader("Accept")
 	return strings.Contains(accept, "text/event-stream")
+}
+
+// Enhancements 增强能力列表（前端增强面板动态渲染，多能力预留）
+//
+//	@Summary		增强能力列表
+//	@Description	返回可用增强能力。当前能力：web_search（联网搜索）；available 表示后端是否已配置就绪（配置了 web_search.api_key）
+//	@Tags			问答
+//	@Success		200	{object}	Response{data=map[string]any}
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/chat/enhancements [get]
+func (h *handler) Enhancements(c *gin.Context) {
+	var webAvailable bool
+	if h.cfgMgr != nil {
+		if cfg := h.cfgMgr.Get(); cfg != nil {
+			webAvailable = cfg.WebSearch.APIKey != ""
+		}
+	}
+	OK(c, gin.H{"enhancements": []gin.H{
+		{
+			"key":         "web_search",
+			"label":       "联网搜索",
+			"description": "搜索互联网获取实时信息，补充知识库未覆盖的内容",
+			"available":   webAvailable,
+		},
+	}})
 }
