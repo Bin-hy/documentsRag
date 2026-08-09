@@ -52,6 +52,17 @@ jobs:
         run: npm test
 
       # ---- Go 静态检查与编译 ----
+      # cmd/desktop 引入 Wails v3（CGO），其内部包在 Linux 上需要 GTK4 / WebKitGTK 6.0
+      # 等系统库（pkg-config 校验），必须先安装才能通过 go build/vet/test ./...
+      - name: 安装 Wails Linux 系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-4-dev \
+            libwebkitgtk-6.0-dev \
+            libglib2.0-dev \
+            libsoup-3.0-dev
+
       - name: Go 编译
         run: go build ./...
 
