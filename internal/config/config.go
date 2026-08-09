@@ -1,7 +1,10 @@
 package config
 
 import (
+	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -213,7 +216,10 @@ type ServerConfig struct {
 	RateLimitQPS    int    `yaml:"rate_limit_qps"`    // 0 表示不限制
 }
 
-// LoadConfig 加载配置文件
+// LoadConfig 加载配置文件。
+// 约定：同目录 <主文件名>.local.yaml（如 configs/config.local.yaml）为本地私有覆盖，
+// 存在时自动合并——local 中出现的字段覆盖主配置，未出现的字段保留主配置值。
+// 这样桌面版/默认启动无需 -c 参数也能应用本地配置（如 web_search.api_key、llm 指向本地模型）。
 func LoadConfig(path string) (*Config, error) {
 	if path == "" {
 		path = os.Getenv("BINRAG_CONFIG")
@@ -232,8 +238,34 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, err
 	}
 
+	// 自动合并本地覆盖文件（<主文件名>.local.yaml）
+	if lp := localOverridePath(path); lp != "" {
+		localData, err := os.ReadFile(lp)
+		if err != nil {
+			slog.Warn("读取本地配置覆盖文件失败，忽略 local 覆盖", "path", lp, "err", err)
+		} else if err := yaml.Unmarshal(localData, &cfg); err != nil {
+			// yaml.v3 对已填充结构：local 出现的字段覆盖，未出现的保留
+			slog.Warn("解析本地配置覆盖文件失败，忽略 local 覆盖", "path", lp, "err", err)
+		} else {
+			slog.Info("已合并本地配置覆盖", "local", lp, "main", path)
+		}
+	}
+
 	cfg.applyDefaults()
 	return &cfg, nil
+}
+
+// localOverridePath 返回 <主文件名>.local.yaml 路径；不存在或与主文件相同时返回空串
+func localOverridePath(path string) string {
+	ext := filepath.Ext(path)
+	lp := strings.TrimSuffix(path, ext) + ".local" + ext
+	if lp == path {
+		return ""
+	}
+	if _, err := os.Stat(lp); err != nil {
+		return ""
+	}
+	return lp
 }
 
 func (c *Config) applyDefaults() {

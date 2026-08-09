@@ -102,6 +102,11 @@ cp configs/config.yaml configs/config.local.yaml
 
 编辑 `configs/config.local.yaml`，填入你的模型服务信息（OpenAI 兼容地址均可）：
 
+> 约定：`configs/config.local.yaml` 是本地私有覆盖文件（已被 .gitignore 忽略）。
+> 启动时**自动合并**——local 中出现的字段覆盖 `config.yaml`，未出现的字段保留主配置值；
+> 因此默认启动（桌面版 / 无 `-c` 参数）也会自动应用 local 里的配置（如 `web_search.api_key`、本地模型地址）。
+> 若希望完全独立于 `config.yaml`，仍可用 `-c configs/config.local.yaml` 显式指定（此时不再重复合并 local 自身）。
+
 ```yaml
 embedder:        # 向量模型（如 text-embedding-v4 / bge-m3）
   base_url: "https://api.example.com/v1"
