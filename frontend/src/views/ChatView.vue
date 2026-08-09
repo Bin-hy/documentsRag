@@ -2,6 +2,7 @@
 // 对话页：会话侧栏 + 消息区 + 输入区（知识库选择 / 增强面板 / 流式停止）
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { Promotion, VideoPause } from '@element-plus/icons-vue'
+import { getStoredApiKey } from '../api/client'
 import { useChatStore } from '../stores/chat'
 import { useKbStore } from '../stores/kb'
 import SessionList from '../components/SessionList.vue'
@@ -21,7 +22,7 @@ const webSearchAvailable = ref(false)
 async function loadEnhancements() {
   try {
     const resp = await fetch('/api/v1/chat/enhancements', {
-      headers: { Authorization: `Bearer ${localStorage.getItem('api_key') ?? ''}` },
+      headers: { Authorization: `Bearer ${getStoredApiKey()}` },
     })
     if (!resp.ok) return
     const body = await resp.json()
