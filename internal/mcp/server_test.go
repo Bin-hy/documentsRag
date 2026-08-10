@@ -26,13 +26,13 @@ func pgxErrNoRows() error { return pgx.ErrNoRows }
 
 // fakeStore 内存版 store.Store（仅实现测试所需方法，其余空实现）
 type fakeStore struct {
-	mu   sync.Mutex
-	kbs  map[string]store.KnowledgeBase
-	docs map[string]store.Document
-	tasks map[string]store.Task
-	keys map[string]store.APIKey // id → key
-	byHash map[string]string     // key_hash → id
-	logs []store.AuditLog
+	mu     sync.Mutex
+	kbs    map[string]store.KnowledgeBase
+	docs   map[string]store.Document
+	tasks  map[string]store.Task
+	keys   map[string]store.APIKey // id → key
+	byHash map[string]string       // key_hash → id
+	logs   []store.AuditLog
 }
 
 func newFakeStore() *fakeStore {
@@ -130,30 +130,35 @@ func (f *fakeStore) auditCount() int {
 	defer f.mu.Unlock()
 	return len(f.logs)
 }
+
 // 未用方法空实现
-func (f *fakeStore) CreateKB(context.Context, store.KnowledgeBase) error                { return nil }
-func (f *fakeStore) ListKBsByOwner(context.Context, string) ([]store.KnowledgeBase, error) { return nil, nil }
-func (f *fakeStore) UpdateKB(context.Context, store.KnowledgeBase) error                { return nil }
-func (f *fakeStore) DeleteKB(context.Context, string) error                             { return nil }
-func (f *fakeStore) GetOrCreateUser(context.Context, store.User) (*store.User, error)   { return nil, nil }
-func (f *fakeStore) GetUser(context.Context, string) (*store.User, error)               { return nil, nil }
-func (f *fakeStore) CreateDocument(context.Context, store.Document) error               { return nil }
-func (f *fakeStore) GetDocument(context.Context, string) (*store.Document, error)       { return nil, nil }
+func (f *fakeStore) CreateKB(context.Context, store.KnowledgeBase) error { return nil }
+func (f *fakeStore) ListKBsByOwner(context.Context, string) ([]store.KnowledgeBase, error) {
+	return nil, nil
+}
+func (f *fakeStore) UpdateKB(context.Context, store.KnowledgeBase) error { return nil }
+func (f *fakeStore) DeleteKB(context.Context, string) error              { return nil }
+func (f *fakeStore) GetOrCreateUser(context.Context, store.User) (*store.User, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetUser(context.Context, string) (*store.User, error)                 { return nil, nil }
+func (f *fakeStore) CreateDocument(context.Context, store.Document) error                 { return nil }
+func (f *fakeStore) GetDocument(context.Context, string) (*store.Document, error)         { return nil, nil }
 func (f *fakeStore) UpdateDocumentStatus(context.Context, string, string, []string) error { return nil }
-func (f *fakeStore) DeleteDocument(context.Context, string) error                       { return nil }
-func (f *fakeStore) CreateTask(context.Context, store.Task) error                       { return nil }
-func (f *fakeStore) ListTasks(context.Context, string) ([]store.Task, error)            { return nil, nil }
-func (f *fakeStore) UpdateTask(context.Context, store.Task) error                       { return nil }
-func (f *fakeStore) ClaimPendingTasks(context.Context, int) ([]store.Task, error)       { return nil, nil }
-func (f *fakeStore) ResetProcessingTasks(context.Context) error                         { return nil }
-func (f *fakeStore) CreateAPIKey(context.Context, store.APIKey) error                   { return nil }
-func (f *fakeStore) ListAPIKeys(context.Context) ([]store.APIKey, error)                { return nil, nil }
-func (f *fakeStore) SetAPIKeyEnabled(context.Context, string, bool) error               { return nil }
-func (f *fakeStore) DeleteAPIKey(context.Context, string) error                         { return nil }
-func (f *fakeStore) TouchAPIKey(context.Context, string) error                          { return nil }
-func (f *fakeStore) HistoryStore() store.HistoryStore                                  { return nil }
-func (f *fakeStore) Migrate(context.Context) error                                      { return nil }
-func (f *fakeStore) Close()                                                             {}
+func (f *fakeStore) DeleteDocument(context.Context, string) error                         { return nil }
+func (f *fakeStore) CreateTask(context.Context, store.Task) error                         { return nil }
+func (f *fakeStore) ListTasks(context.Context, string) ([]store.Task, error)              { return nil, nil }
+func (f *fakeStore) UpdateTask(context.Context, store.Task) error                         { return nil }
+func (f *fakeStore) ClaimPendingTasks(context.Context, int) ([]store.Task, error)         { return nil, nil }
+func (f *fakeStore) ResetProcessingTasks(context.Context) error                           { return nil }
+func (f *fakeStore) CreateAPIKey(context.Context, store.APIKey) error                     { return nil }
+func (f *fakeStore) ListAPIKeys(context.Context) ([]store.APIKey, error)                  { return nil, nil }
+func (f *fakeStore) SetAPIKeyEnabled(context.Context, string, bool) error                 { return nil }
+func (f *fakeStore) DeleteAPIKey(context.Context, string) error                           { return nil }
+func (f *fakeStore) TouchAPIKey(context.Context, string) error                            { return nil }
+func (f *fakeStore) HistoryStore() store.HistoryStore                                     { return nil }
+func (f *fakeStore) Migrate(context.Context) error                                        { return nil }
+func (f *fakeStore) Close()                                                               {}
 
 // fakeEngine 固定回答的 rag.Engine（err 非 nil 时 Ask 返回错误）
 type fakeEngine struct{ err error }

@@ -110,7 +110,7 @@ func TestMCPConfigExplicit(t *testing.T) {
 	}
 }
 
-func TestOIDCValidate(t *testing.T) {	// 合法配置：oidc 默认 type/scope + github oauth2
+func TestOIDCValidate(t *testing.T) { // 合法配置：oidc 默认 type/scope + github oauth2
 	valid := &Config{OIDC: OIDCConfig{
 		Enabled:   true,
 		PublicURL: "https://rag.example.com",

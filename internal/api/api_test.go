@@ -67,7 +67,8 @@ func (f *fakeStore) ListKBsByOwner(ctx context.Context, ownerID string) ([]store
 	defer f.mu.Unlock()
 	var out []store.KnowledgeBase
 	for _, kb := range f.kbs {
-		if kb.OwnerID != nil && *kb.OwnerID == ownerID {			out = append(out, kb)
+		if kb.OwnerID != nil && *kb.OwnerID == ownerID {
+			out = append(out, kb)
 		}
 	}
 	return out, nil
@@ -262,9 +263,9 @@ func (f *fakeStore) ListKBsByIDs(ctx context.Context, ids []string) ([]store.Kno
 	return out, nil
 }
 func (f *fakeStore) AppendAuditLog(ctx context.Context, log store.AuditLog) error { return nil }
-func (f *fakeStore) HistoryStore() store.HistoryStore                           { return nil }
-func (f *fakeStore) Migrate(ctx context.Context) error                          { return nil }
-func (f *fakeStore) Close()                                                     {}
+func (f *fakeStore) HistoryStore() store.HistoryStore                             { return nil }
+func (f *fakeStore) Migrate(ctx context.Context) error                            { return nil }
+func (f *fakeStore) Close()                                                       {}
 
 type fakeEngine struct {
 	mu           sync.Mutex

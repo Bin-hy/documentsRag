@@ -88,9 +88,9 @@ type APIKey struct {
 
 // APIKeyPermissions Key 的 MCP 权限（管理接口更新请求体）
 type APIKeyPermissions struct {
-	MCPTools   []string `json:"mcp_tools"`     // 允许的 Tool 白名单；nil = 清空
-	MCPKBScope string   `json:"mcp_kb_scope"`  // "" | "all" | "allowlist"
-	MCPKBIDs   []string `json:"mcp_kb_ids"`    // 知识库白名单；nil = 清空
+	MCPTools   []string `json:"mcp_tools"`    // 允许的 Tool 白名单；nil = 清空
+	MCPKBScope string   `json:"mcp_kb_scope"` // "" | "all" | "allowlist"
+	MCPKBIDs   []string `json:"mcp_kb_ids"`   // 知识库白名单；nil = 清空
 }
 
 // AuditLog MCP 调用审计记录（spec F7：仅记录 api_key_id 引用与截断参数，绝不存 Secret/Token）

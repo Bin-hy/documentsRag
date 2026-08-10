@@ -43,8 +43,8 @@ type oidcProvider struct {
 	issuer        string // 配置的 issuer（严格校验 / 降级校验共用）
 	oauthCfg      oauth2.Config
 	verifier      *oidc.IDTokenVerifier
-	permissiveSub bool            // 兼容服务商把 sub 签发为数字（仍全量验签与 claims 校验）
-	keySet        oidc.KeySet     // 降级校验路径的签名验证（remote JWKS）
+	permissiveSub bool        // 兼容服务商把 sub 签发为数字（仍全量验签与 claims 校验）
+	keySet        oidc.KeySet // 降级校验路径的签名验证（remote JWKS）
 }
 
 // NewOIDCProvider 启动期构建：带超时执行 issuer discovery；失败即返回错误（装配失败）。
@@ -62,9 +62,9 @@ func NewOIDCProvider(ctx context.Context, cfg config.ProviderConfig, redirectURL
 		scope = []string{oidc.ScopeOpenID, oidc.ScopeProfile, oidc.ScopeEmail}
 	}
 	prov := &oidcProvider{
-		name:          cfg.Name,
-		displayName:   cfg.DisplayName,
-		issuer:        cfg.Issuer,
+		name:        cfg.Name,
+		displayName: cfg.DisplayName,
+		issuer:      cfg.Issuer,
 		oauthCfg: oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -191,15 +191,15 @@ func (p *oidcProvider) verifyPermissive(ctx context.Context, idTokenStr, nonce s
 	}
 
 	var claims struct {
-		Issuer   string          `json:"iss"`
-		Audience json.RawMessage `json:"aud"`
-		Expiry   int64           `json:"exp"`
-		IssuedAt int64           `json:"iat,omitempty"`
-		NotBefore int64          `json:"nbf,omitempty"`
-		Nonce    string          `json:"nonce"`
-		Subject  json.RawMessage `json:"sub"`
-		Name     string          `json:"name"`
-		Email    string          `json:"email"`
+		Issuer    string          `json:"iss"`
+		Audience  json.RawMessage `json:"aud"`
+		Expiry    int64           `json:"exp"`
+		IssuedAt  int64           `json:"iat,omitempty"`
+		NotBefore int64           `json:"nbf,omitempty"`
+		Nonce     string          `json:"nonce"`
+		Subject   json.RawMessage `json:"sub"`
+		Name      string          `json:"name"`
+		Email     string          `json:"email"`
 	}
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil, fmt.Errorf("id_token claims 解析失败: %w", err)

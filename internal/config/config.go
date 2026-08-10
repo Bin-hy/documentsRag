@@ -210,15 +210,15 @@ type PostgresConfig struct {
 
 // ServerConfig HTTP 服务配置
 type ServerConfig struct {
-	Port            int    `yaml:"port"`
-	FileStorageDir  string `yaml:"file_storage_dir"`
-	UploadMaxSizeMB int    `yaml:"upload_max_size_mb"`
-	WorkerCount     int    `yaml:"worker_count"`
-	TaskMaxRetries  int    `yaml:"task_max_retries"`
-	AuthEnabled     bool   `yaml:"auth_enabled"`
-	BootstrapAPIKey string `yaml:"bootstrap_api_key"` // 仅首次启动种子用
-	RateLimitQPS    int    `yaml:"rate_limit_qps"`    // 0 表示不限制
-	MCP             MCPConfig `yaml:"mcp"`            // MCP Server（只读 RAG 能力）
+	Port            int       `yaml:"port"`
+	FileStorageDir  string    `yaml:"file_storage_dir"`
+	UploadMaxSizeMB int       `yaml:"upload_max_size_mb"`
+	WorkerCount     int       `yaml:"worker_count"`
+	TaskMaxRetries  int       `yaml:"task_max_retries"`
+	AuthEnabled     bool      `yaml:"auth_enabled"`
+	BootstrapAPIKey string    `yaml:"bootstrap_api_key"` // 仅首次启动种子用
+	RateLimitQPS    int       `yaml:"rate_limit_qps"`    // 0 表示不限制
+	MCP             MCPConfig `yaml:"mcp"`               // MCP Server（只读 RAG 能力）
 }
 
 // MCPConfig MCP Server 配置（默认关闭，安全默认 D7）
@@ -255,15 +255,15 @@ type OIDCConfig struct {
 // PermissiveSub：兼容不规范 OIDC 服务商把 sub 签发为数字的场景（仍保留签名/iss/aud/exp/nbf/nonce 全量校验，
 // 仅将数字 sub 确定性转为字符串）；默认 false 保持严格规范。
 type ProviderConfig struct {
-	Name         string   `yaml:"name"`          // 标识，须可安全用于 URL path（^[a-zA-Z0-9_-]+$）
-	Type         string   `yaml:"type"`          // oidc（默认）/ oauth2
-	DisplayName  string   `yaml:"display_name"`  // 前端按钮文案，空 = Name
-	ClientID     string   `yaml:"client_id"`
-	ClientSecret string   `yaml:"client_secret"`
-	Issuer       string   `yaml:"issuer"`        // 仅 type=oidc；OIDC discovery 地址
-	Scope        []string `yaml:"scope"`         // 空 = 按 type 给默认值
-	RedirectURL  string   `yaml:"redirect_url"`  // 可选；默认 <public_url>/api/v1/auth/{oidc/{name}|github}/callback
-	PermissiveSub bool   `yaml:"permissive_sub"` // 兼容数字 sub（见上注释）
+	Name          string   `yaml:"name"`         // 标识，须可安全用于 URL path（^[a-zA-Z0-9_-]+$）
+	Type          string   `yaml:"type"`         // oidc（默认）/ oauth2
+	DisplayName   string   `yaml:"display_name"` // 前端按钮文案，空 = Name
+	ClientID      string   `yaml:"client_id"`
+	ClientSecret  string   `yaml:"client_secret"`
+	Issuer        string   `yaml:"issuer"`         // 仅 type=oidc；OIDC discovery 地址
+	Scope         []string `yaml:"scope"`          // 空 = 按 type 给默认值
+	RedirectURL   string   `yaml:"redirect_url"`   // 可选；默认 <public_url>/api/v1/auth/{oidc/{name}|github}/callback
+	PermissiveSub bool     `yaml:"permissive_sub"` // 兼容数字 sub（见上注释）
 }
 
 // LoadConfig 加载配置文件。

@@ -39,9 +39,9 @@ func TestAPIKeyPermissions(t *testing.T) {
 
 	// 系统级 Key 更新权限（allowlist）
 	w = doReq(t, env.router, "PUT", "/api/v1/api-keys/"+keyID+"/permissions", map[string]any{
-		"mcp_tools":     []string{"retrieve", "ask"},
-		"mcp_kb_scope":  "allowlist",
-		"mcp_kb_ids":    []string{"kb-a", "kb-b"},
+		"mcp_tools":    []string{"retrieve", "ask"},
+		"mcp_kb_scope": "allowlist",
+		"mcp_kb_ids":   []string{"kb-a", "kb-b"},
 	}, testAPIKey)
 	if w.Code != 200 {
 		t.Fatalf("更新权限失败: %d %s", w.Code, w.Body.String())

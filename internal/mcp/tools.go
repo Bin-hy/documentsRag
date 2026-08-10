@@ -19,12 +19,12 @@ import (
 
 // Tool 名称常量（网关层授权 / 审计共用）
 const (
-	ToolListKBs = "list_knowledge_bases"
-	ToolGetKB   = "get_knowledge_base"
+	ToolListKBs  = "list_knowledge_bases"
+	ToolGetKB    = "get_knowledge_base"
 	ToolRetrieve = "retrieve"
-	ToolAsk     = "ask"
+	ToolAsk      = "ask"
 	ToolListDocs = "list_documents"
-	ToolGetTask = "get_task"
+	ToolGetTask  = "get_task"
 )
 
 // AllTools 全部已注册 Tool 名（tools/list 全量返回；授权按 Key 白名单拦截）

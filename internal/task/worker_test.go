@@ -43,7 +43,7 @@ func (f *fakeStore) ListKBsByIDs(ctx context.Context, ids []string) ([]store.Kno
 func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p store.APIKeyPermissions) error {
 	return nil
 }
-func (f *fakeStore) AppendAuditLog(ctx context.Context, log store.AuditLog) error { return nil }
+func (f *fakeStore) AppendAuditLog(ctx context.Context, log store.AuditLog) error  { return nil }
 func (f *fakeStore) ListAllKBs(ctx context.Context) ([]store.KnowledgeBase, error) { return nil, nil }
 func (f *fakeStore) ListKBsByOwner(ctx context.Context, ownerID string) ([]store.KnowledgeBase, error) {
 	return nil, nil

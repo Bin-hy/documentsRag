@@ -76,7 +76,7 @@ func TestToolPermissionDenied(t *testing.T) {
 	}
 }
 
-// KB 越权：allowlist 外 kb_id → -32001；scope=all 可访问；scope='' 未指定 kb_id → -32001
+// KB 越权：allowlist 外 kb_id → -32001；scope=all 可访问；scope=” 未指定 kb_id → -32001
 func TestKBPermissionDenied(t *testing.T) {
 	st := newFakeStore()
 	st.kbs["kb-a"] = store.KnowledgeBase{ID: "kb-a", Name: "A", CreatedAt: time.Now(), UpdatedAt: time.Now()}

@@ -16,7 +16,7 @@ type BM25Index interface {
 	Add(id string, content string, kbID string)
 	Remove(id string)
 	Search(query string, topK int) []BM25Result
-	SearchFiltered(query string, topK int, kbID string) []BM25Result // 空 kbID 不过滤
+	SearchFiltered(query string, topK int, kbID string) []BM25Result         // 空 kbID 不过滤
 	SearchFilteredByKBs(query string, topK int, kbIDs []string) []BM25Result // 空集合不过滤
 	Rebuild(docs []BM25Doc)
 	DocCount() int
