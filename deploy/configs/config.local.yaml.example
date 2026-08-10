@@ -1,0 +1,67 @@
+# ============================================================================
+# BinRag 生产环境配置覆盖模板（dokploy 部署用）
+#
+# 用法：
+#   镜像内置 configs/config.yaml（示例默认值，路径 /app/configs/config.yaml）。
+#   本文件是「本地覆盖」——通过 dokploy 的 File Mount 挂载为容器内
+#   /app/configs/config.local.yaml，启动时自动合并：
+#     本文件出现的字段覆盖默认值，未出现的字段保留镜像内默认值。
+#   这样模型密钥、数据库地址等敏感信息不写进镜像，全部在此注入。
+#
+#   复制本文件为 config.local.yaml，替换 <...> 占位符后，在 dokploy 服务
+#   的 File Mounts 中挂载到 /app/configs/config.local.yaml。
+# ============================================================================
+
+# ---- 元数据存储：dokploy 内 PostgreSQL 服务（服务名 = 该服务在项目网络中的别名）----
+postgres:
+  dsn: "postgres://binrag:<POSTGRES_PASSWORD>@<postgres服务名>:5432/binrag"
+
+# ---- 向量存储：dokploy 内 Qdrant 服务（gRPC 端口 6334）----
+vectorstore:
+  host: "<qdrant服务名>:6334"
+
+# ---- Embedding 模型（OpenAI 兼容接口）----
+embedder:
+  base_url: "https://<你的embedding服务>/v1"
+  api_key: "<你的key>"
+  model: "text-embedding-v4"
+  # 维度须与 Qdrant 集合一致（首次创建后修改需重建集合）
+  dimension: 1024
+
+# ---- 问答模型（OpenAI 兼容接口）----
+llm:
+  base_url: "https://<你的llm服务>/v1"
+  api_key: "<你的key>"
+  model: "gpt-4o"
+
+# ---- 检索器 ----
+retriever:
+  # Reranker 重排序的总开关（默认 true）。无专用 rerank 服务时改为 false，
+  # 检索直接返回 向量+BM25 融合结果。
+  enable_reranker: true
+
+# ---- 重排序（可选；真正的开关是上面 retriever.enable_reranker）----
+# 注意：仅注释掉本段无效——主配置的 base_url 占位符仍会被使用，每次检索会
+# 向 <https://xxx>/v1/rerank 发一次注定失败的请求后才降级。
+reranker:
+  base_url: "https://<你的rerank服务>/v1"
+  api_key: "<你的key>"
+  model: "bge-reranker-v2-m3"
+
+# ---- HTTP 服务 ----
+server:
+  # 首次启动种子 Key：只用于创建第一个 API Key，建完立即删除本行并重启！
+  bootstrap_api_key: "sk-你的bootstrap密钥"
+
+# ---- 三方登录（可选；启用时 public_url 必填 = dokploy 对外域名，回调地址在
+#      Provider 后台登记 <public_url>/api/v1/auth/{oidc/{name}|github}/callback）----
+# oidc:
+#   enabled: true
+#   public_url: "https://rag.yourdomain.com"
+#   jwt_secret: "<固定随机串，避免重启后旧会话失效>"
+#   providers:
+#     - name: github
+#       type: oauth2
+#       display_name: GitHub
+#       client_id: ""
+#       client_secret: ""

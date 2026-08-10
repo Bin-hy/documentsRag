@@ -1,0 +1,72 @@
+# ============================================================================
+# BinRag 生产部署镜像（dokploy Dockerfile 模式 / 任意 Docker 环境）
+#
+# 多阶段构建：
+#   阶段 1 frontend : Node 22 构建 Vue 3 前端（产物输出 internal/webui/dist）
+#   阶段 2 backend  : Go 1.26 编译单二进制（CGO_ENABLED=0，go:embed 嵌入前端）
+#   阶段 3 runtime  : Alpine 精简运行时（二进制 + 示例配置 + CA 证书）
+#
+# 产物：单一可执行文件，同源托管 API 与前端静态资源（无跨域，SSE 流式顺畅）。
+# 架构：单服务不分离；Cloudflare 通过 DNS 代理 / Tunnel 提供 CDN 与 HTTPS。
+#
+# 构建：
+#   docker build -f Dockerfile.deploy -t binrag-server:latest .
+# 运行（需先有 PostgreSQL 与 Qdrant，配置见 docs/部署指南-dokploy.md）：
+#   docker run -d -p 8085:8085 -v binrag-data:/app/data binrag-server:latest
+# ============================================================================
+
+# ---------- 阶段 1：构建前端 ----------
+FROM node:22-alpine AS frontend
+
+WORKDIR /app/frontend
+
+# 先安装依赖（package-lock.json 锁定版本；单独一层以利用构建缓存）
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+# 拷贝前端源码并构建（vite.config.ts 已配置 outDir=../internal/webui/dist）
+COPY frontend/ ./
+RUN npm run build
+
+# ---------- 阶段 2：编译 Go 二进制 ----------
+FROM golang:1.26-alpine AS backend
+
+WORKDIR /app
+
+# 先下载 Go 依赖（单独一层以利用构建缓存）
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 拷贝源码（.dockerignore 已排除 dist / node_modules 等构建产物）
+COPY . .
+
+# 覆盖为前端阶段的最新构建产物（go:embed 编译时打包进二进制）
+COPY --from=frontend /app/internal/webui/dist ./internal/webui/dist
+
+# 编译：无 CGO 可交叉编译；TARGETARCH 由 buildx 注入（普通 build 默认 amd64）
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-w -s" -o /out/binrag-server ./cmd/server
+
+# ---------- 阶段 3：运行镜像 ----------
+FROM alpine:3.20
+
+# CA 证书（访问外部模型/Embedding API 需要）+ 时区数据；固定 uid 1000 便于挂载卷授权
+RUN apk add --no-cache ca-certificates tzdata \
+    && addgroup -S -g 1000 binrag \
+    && adduser -S -u 1000 -G binrag binrag
+
+WORKDIR /app
+
+# 二进制 + 示例配置（生产覆盖通过挂载 config.local.yaml 自动合并，见部署文档）
+COPY --from=backend /out/binrag-server ./binrag-server
+COPY configs/config.yaml ./configs/config.yaml
+
+# 上传文件存储目录（生产环境务必把持久化卷挂载到 /app/data）
+RUN mkdir -p /app/data/uploads && chown -R binrag:binrag /app
+
+USER binrag
+
+EXPOSE 8085
+
+CMD ["./binrag-server", "-c", "/app/configs/config.yaml"]
