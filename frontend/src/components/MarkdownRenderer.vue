@@ -54,17 +54,19 @@ const html = computed(() =>
 }
 
 .markdown-body :deep(pre) {
-  padding: 12px;
-  border-radius: 8px;
+  padding: 14px 16px;
+  border-radius: 12px;
   overflow-x: auto;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: #1b1f2a;
+  color: #d6dae4;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.04);
 }
 
 .markdown-body :deep(code:not(pre code)) {
   padding: 2px 5px;
   border-radius: 4px;
-  background: var(--br-hover);
+  background: var(--br-bg-inset);
   font-size: 13px;
 }
 
@@ -81,10 +83,10 @@ const html = computed(() =>
 
 .markdown-body :deep(blockquote) {
   margin: 0 0 8px;
-  padding: 4px 12px;
+  padding: 6px 14px;
   border-left: 3px solid var(--br-primary);
-  background: var(--br-hover);
-  border-radius: 0 6px 6px 0;
+  background: var(--br-primary-soft);
+  border-radius: 0 var(--br-radius-md) var(--br-radius-md) 0;
 }
 
 .markdown-body :deep(table) {

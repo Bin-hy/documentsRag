@@ -159,19 +159,21 @@ onMounted(load)
 
 <style scoped>
 .keys-page {
-  padding: 20px 24px;
+  padding: 24px 28px;
 }
 
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .key-warn {
@@ -186,9 +188,10 @@ onMounted(load)
 
 .key-text {
   flex: 1;
-  padding: 10px 12px;
-  background: var(--br-hover);
-  border-radius: 6px;
+  padding: 12px 14px;
+  background: var(--br-bg-inset);
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-md);
   font-size: 13px;
   word-break: break-all;
   user-select: all;

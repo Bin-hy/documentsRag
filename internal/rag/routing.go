@@ -66,7 +66,7 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 	prompt, err := renderHyDE(query, e.templates.hyde)
 	if err != nil {
 		slog.Warn("HyDE 提示渲染失败，降级原查询", "err", err)
-		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID)})
+		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID, o.KBIDs...)})
 	}
 	hypoDoc, err := e.llm.Generate(ctx,
 		[]llm.Message{{Role: llm.RoleUser, Content: prompt}},
@@ -74,7 +74,7 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 	)
 	if err != nil {
 		slog.Warn("HyDE 假设文档生成失败，降级原查询", "err", err)
-		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID)})
+		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID, o.KBIDs...)})
 	}
 	slog.Info("HyDE 假设文档生成", "耗时ms", time.Since(start).Milliseconds())
 	// 思考链路：假设文档（F7/N3，服务端截断）
@@ -88,14 +88,14 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 	vectors, err := e.embedder.Embed(ctx, []string{hypoDoc})
 	if err != nil || len(vectors) == 0 {
 		slog.Warn("HyDE Embedding 失败，降级原查询", "err", err)
-		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID)})
+		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID, o.KBIDs...)})
 	}
 
 	// 3. HyDE 向量路 + 原查询路（思考链路：HyDE 双路，F7）
-	hydeResults, err := e.retriever.SearchByVector(ctx, vectors[0], e.cfg.TopK, kbFilter(o.KBID))
+	hydeResults, err := e.retriever.SearchByVector(ctx, vectors[0], e.cfg.TopK, kbFilter(o.KBID, o.KBIDs...))
 	if err != nil {
 		slog.Warn("HyDE 向量检索失败，降级原查询", "err", err)
-		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID)})
+		return e.retriever.Search(ctx, retriever.RetrieveRequest{Query: query, TopK: e.cfg.TopK, Filter: kbFilter(o.KBID, o.KBIDs...)})
 	}
 	recordStep(sink, ThinkingStep{
 		Type:  StepRetrieval,
@@ -105,7 +105,7 @@ func (e *RAGEngine) hydeSearch(ctx context.Context, query string, o AskOptions) 
 	origResults, err := e.retriever.Search(ctx, retriever.RetrieveRequest{
 		Query:      query,
 		TopK:       e.cfg.TopK,
-		Filter:     kbFilter(o.KBID),
+		Filter:     kbFilter(o.KBID, o.KBIDs...),
 		SkipRerank: true, // 融合后统一整体重排（F2）
 	})
 	if err != nil {
@@ -149,7 +149,7 @@ func (e *RAGEngine) tryMultiQuery(ctx context.Context, sessionID string, questio
 	chunks, err := e.retriever.SearchMulti(ctx, retriever.RetrieveRequest{
 		Query:  question,
 		TopK:   e.cfg.TopK,
-		Filter: kbFilter(o.KBID),
+		Filter: kbFilter(o.KBID, o.KBIDs...),
 		Trace:  traceSinkForRequest(sink, question),
 	}, queries)
 	if err != nil {

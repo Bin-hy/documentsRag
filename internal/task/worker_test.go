@@ -37,7 +37,21 @@ func newFakeStore() *fakeStore {
 }
 
 func (f *fakeStore) CreateKB(ctx context.Context, kb store.KnowledgeBase) error { return nil }
-func (f *fakeStore) ListKBs(ctx context.Context) ([]store.KnowledgeBase, error) { return nil, nil }
+func (f *fakeStore) ListKBsByIDs(ctx context.Context, ids []string) ([]store.KnowledgeBase, error) {
+	return nil, nil
+}
+func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p store.APIKeyPermissions) error {
+	return nil
+}
+func (f *fakeStore) AppendAuditLog(ctx context.Context, log store.AuditLog) error { return nil }
+func (f *fakeStore) ListAllKBs(ctx context.Context) ([]store.KnowledgeBase, error) { return nil, nil }
+func (f *fakeStore) ListKBsByOwner(ctx context.Context, ownerID string) ([]store.KnowledgeBase, error) {
+	return nil, nil
+}
+func (f *fakeStore) GetOrCreateUser(ctx context.Context, u store.User) (*store.User, error) {
+	return &u, nil
+}
+func (f *fakeStore) GetUser(ctx context.Context, id string) (*store.User, error) { return nil, nil }
 func (f *fakeStore) GetKB(ctx context.Context, id string) (*store.KnowledgeBase, error) {
 	return nil, nil
 }

@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Bin-hy/bin-rag/internal/auth"
 	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/loader"
@@ -33,6 +34,7 @@ type fakeStore struct {
 	docs  map[string]store.Document
 	tasks map[string]store.Task
 	keys  map[string]store.APIKey
+	users map[string]store.User
 }
 
 func newFakeStore() *fakeStore {
@@ -41,6 +43,7 @@ func newFakeStore() *fakeStore {
 		docs:  make(map[string]store.Document),
 		tasks: make(map[string]store.Task),
 		keys:  make(map[string]store.APIKey),
+		users: make(map[string]store.User),
 	}
 }
 
@@ -50,7 +53,7 @@ func (f *fakeStore) CreateKB(ctx context.Context, kb store.KnowledgeBase) error 
 	f.kbs[kb.ID] = kb
 	return nil
 }
-func (f *fakeStore) ListKBs(ctx context.Context) ([]store.KnowledgeBase, error) {
+func (f *fakeStore) ListAllKBs(ctx context.Context) ([]store.KnowledgeBase, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []store.KnowledgeBase
@@ -58,6 +61,42 @@ func (f *fakeStore) ListKBs(ctx context.Context) ([]store.KnowledgeBase, error) 
 		out = append(out, kb)
 	}
 	return out, nil
+}
+func (f *fakeStore) ListKBsByOwner(ctx context.Context, ownerID string) ([]store.KnowledgeBase, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []store.KnowledgeBase
+	for _, kb := range f.kbs {
+		if kb.OwnerID != nil && *kb.OwnerID == ownerID {			out = append(out, kb)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetOrCreateUser(ctx context.Context, u store.User) (*store.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, existing := range f.users {
+		if existing.Provider == u.Provider && existing.Subject == u.Subject {
+			existing.Name = u.Name
+			f.users[existing.ID] = existing
+			cp := existing
+			return &cp, nil
+		}
+	}
+	f.users[u.ID] = u
+	cp := u
+	return &cp, nil
+}
+func (f *fakeStore) GetUser(ctx context.Context, id string) (*store.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u, ok := f.users[id]
+	if !ok {
+		return nil, nil
+	}
+	cp := u
+	return &cp, nil
 }
 func (f *fakeStore) GetKB(ctx context.Context, id string) (*store.KnowledgeBase, error) {
 	f.mu.Lock()
@@ -201,9 +240,31 @@ func (f *fakeStore) DeleteAPIKey(ctx context.Context, id string) error {
 	return nil
 }
 func (f *fakeStore) TouchAPIKey(ctx context.Context, id string) error { return nil }
-func (f *fakeStore) HistoryStore() store.HistoryStore                 { return nil }
-func (f *fakeStore) Migrate(ctx context.Context) error                { return nil }
-func (f *fakeStore) Close()                                           {}
+func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p store.APIKeyPermissions) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := f.keys[id]
+	k.MCPTools = p.MCPTools
+	k.MCPKBScope = p.MCPKBScope
+	k.MCPKBIDs = p.MCPKBIDs
+	f.keys[id] = k
+	return nil
+}
+func (f *fakeStore) ListKBsByIDs(ctx context.Context, ids []string) ([]store.KnowledgeBase, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]store.KnowledgeBase, 0, len(ids))
+	for _, id := range ids {
+		if kb, ok := f.kbs[id]; ok {
+			out = append(out, kb)
+		}
+	}
+	return out, nil
+}
+func (f *fakeStore) AppendAuditLog(ctx context.Context, log store.AuditLog) error { return nil }
+func (f *fakeStore) HistoryStore() store.HistoryStore                           { return nil }
+func (f *fakeStore) Migrate(ctx context.Context) error                          { return nil }
+func (f *fakeStore) Close()                                                     {}
 
 type fakeEngine struct {
 	mu           sync.Mutex
@@ -253,7 +314,8 @@ func (f *fakeEngine) StreamAsk(ctx context.Context, sessionID string, question s
 }
 
 type fakeVS struct {
-	deleted [][]string
+	deleted  [][]string
+	payloads map[string]map[string]any // chunk_id → payload（Get 用）
 }
 
 func (f *fakeVS) Upsert(ctx context.Context, records []vectorstore.VectorRecord) error { return nil }
@@ -265,7 +327,11 @@ func (f *fakeVS) Delete(ctx context.Context, ids []string) error {
 	return nil
 }
 func (f *fakeVS) Get(ctx context.Context, id string) (map[string]any, bool, error) {
-	// 测试中不构造实际点数据；chunks 接口测试用专门构造
+	if f.payloads != nil {
+		if p, ok := f.payloads[id]; ok {
+			return p, true, nil
+		}
+	}
 	return nil, false, nil
 }
 func (f *fakeVS) EnsureCollection(ctx context.Context) error { return nil }
@@ -279,6 +345,9 @@ func (f *fakeBM25) Add(id string, content string, kbID string)           {}
 func (f *fakeBM25) Remove(id string)                                     { f.removed = append(f.removed, id) }
 func (f *fakeBM25) Search(query string, topK int) []retriever.BM25Result { return nil }
 func (f *fakeBM25) SearchFiltered(query string, topK int, kbID string) []retriever.BM25Result {
+	return nil
+}
+func (f *fakeBM25) SearchFilteredByKBs(query string, topK int, kbIDs []string) []retriever.BM25Result {
 	return nil
 }
 func (f *fakeBM25) Rebuild(docs []retriever.BM25Doc) {}
@@ -346,6 +415,7 @@ type testEnv struct {
 	vs      *fakeVS
 	bm25    *fakeBM25
 	history *fakeHistoryStore
+	authMgr *auth.Manager
 }
 
 const testAPIKey = "test-secret-key"
@@ -355,7 +425,20 @@ func keyHash(key string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// testAuthManager 空认证管理器（无 provider；可签发/校验 JWT、签发 ticket）
+func testAuthManager() *auth.Manager {
+	m, err := auth.NewManager(nil)
+	if err != nil {
+		panic(err)
+	}
+	return m
+}
+
 func newTestEnv(t *testing.T) *testEnv {
+	return newTestEnvWithAuth(t, testAuthManager())
+}
+
+func newTestEnvWithAuth(t *testing.T, authMgr *auth.Manager) *testEnv {
 	t.Helper()
 
 	fs := newFakeStore()
@@ -379,6 +462,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	router := NewRouter(Dependencies{
 		Config:   cfg,
 		Store:    fs,
+		Auth:     authMgr,
 		VS:       fv,
 		BM25:     fb,
 		Registry: reg,
@@ -386,7 +470,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		History:  fh,
 	})
 
-	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh}
+	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh, authMgr: authMgr}
 }
 
 func doReq(t *testing.T, r *gin.Engine, method, path string, body any, token string) *httptest.ResponseRecorder {
@@ -539,6 +623,7 @@ func TestUploadUnsupportedFormat(t *testing.T) {
 // AC4: 删除文档清理向量与 BM25
 func TestDeleteDocument(t *testing.T) {
 	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
 	env.store.docs["doc-1"] = store.Document{
 		ID: "doc-1", KBID: "kb-1", Filename: "a.md", Status: store.DocStatusCompleted,
 		ChunkIDs: []string{"c1", "c2"},
@@ -597,6 +682,7 @@ func TestUploadTooLarge(t *testing.T) {
 // AC6: 问答返回回答与引用来源
 func TestChat(t *testing.T) {
 	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
 
 	w := doReq(t, env.router, "POST", "/api/v1/chat",
 		map[string]string{"session_id": "s1", "question": "产品支持哪些格式？", "kb_id": "kb-1"}, testAPIKey)
@@ -614,6 +700,118 @@ func TestChat(t *testing.T) {
 	}
 	if sources, ok := data["sources"].([]any); !ok || len(sources) != 1 {
 		t.Errorf("引用来源错误: %+v", data["sources"])
+	}
+}
+
+// 辅助：签发测试 JWT（OIDC/GitHub 会话身份）
+func issueTestJWT(t *testing.T, env *testEnv, userID string) string {
+	t.Helper()
+	ticket, err := env.authMgr.IssueTicket(userID, "github")
+	if err != nil {
+		t.Fatalf("签发 ticket 失败: %v", err)
+	}
+	jwtToken, err := env.authMgr.ExchangeTicket(ticket)
+	if err != nil {
+		t.Fatalf("换取 JWT 失败: %v", err)
+	}
+	return jwtToken
+}
+
+// 辅助：提取最后一次 Ask/StreamAsk 收到的知识库范围（KBID 单值 / KBIDs 多值）
+func lastAskKBScope(engine *fakeEngine) (string, []string) {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	o := &rag.AskOptions{}
+	for _, opt := range engine.lastAskOpts {
+		opt(o)
+	}
+	return o.KBID, o.KBIDs
+}
+
+// resolveKBScope：登录用户（JWT）不指定 kb_id → 自动展开为其名下全部知识库
+// （不含系统级库与其他用户的私有库，与 ListKBs/canAccessKB 隔离语义一致）
+func TestChatUserNoKBSpecExpandsToAccessibleKBs(t *testing.T) {
+	env := newTestEnv(t)
+	userID := "user-1"
+	env.store.kbs["kb-mine"] = store.KnowledgeBase{ID: "kb-mine", Name: "我的库", OwnerID: &userID}
+	env.store.kbs["kb-system"] = store.KnowledgeBase{ID: "kb-system", Name: "系统库"} // owner_id IS NULL，登录用户不可见
+	other := "user-2"
+	env.store.kbs["kb-other"] = store.KnowledgeBase{ID: "kb-other", Name: "他人库", OwnerID: &other}
+
+	jwtToken := issueTestJWT(t, env, userID)
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]string{"session_id": "s1", "question": "问题"}, jwtToken)
+	if w.Code != 200 {
+		t.Fatalf("问答状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	kbID, kbIDs := lastAskKBScope(env.engine)
+	if kbID != "" {
+		t.Errorf("登录用户未指定 kb_id 时不应设置单值 kb_id: %q", kbID)
+	}
+	if len(kbIDs) != 1 || kbIDs[0] != "kb-mine" {
+		t.Errorf("检索范围应仅包含用户自己的知识库 kb-mine，实际 %v", kbIDs)
+	}
+	for _, id := range kbIDs {
+		if id == "kb-other" || id == "kb-system" {
+			t.Errorf("检索范围不应包含他人私有库或系统级库: %v", kbIDs)
+		}
+	}
+}
+
+// 登录用户名下无任何可访问知识库 → 400 提示创建/指定知识库
+func TestChatUserNoAccessibleKBRejected(t *testing.T) {
+	env := newTestEnv(t)
+	jwtToken := issueTestJWT(t, env, "user-1")
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]string{"session_id": "s1", "question": "问题"}, jwtToken)
+	if w.Code != 400 {
+		t.Fatalf("应返回 400（无可访问知识库）: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// API Key 不指定 kb_id：保持"不限"语义（KBID/KBIDs 均空，kbFilter 不过滤）
+func TestChatAPIKeyNoKBSpecUnlimited(t *testing.T) {
+	env := newTestEnv(t)
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat",
+		map[string]string{"session_id": "s1", "question": "问题"}, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("问答状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	kbID, kbIDs := lastAskKBScope(env.engine)
+	if kbID != "" || len(kbIDs) != 0 {
+		t.Errorf("API Key 不指定 kb_id 时应为不限定，got kbID=%q kbIDs=%v", kbID, kbIDs)
+	}
+}
+
+// SSE 流式问答同样执行知识库范围展开
+func TestChatSSEUserNoKBSpecExpands(t *testing.T) {
+	env := newTestEnv(t)
+	userID := "user-1"
+	env.store.kbs["kb-mine"] = store.KnowledgeBase{ID: "kb-mine", Name: "我的库", OwnerID: &userID}
+	env.engine.streamChunks = []string{"答案"}
+
+	jwtToken := issueTestJWT(t, env, userID)
+
+	w := doReq(t, env.router, "POST", "/api/v1/chat?stream=1",
+		map[string]string{"session_id": "s1", "question": "问题"}, jwtToken)
+	if w.Code != 200 {
+		t.Fatalf("流式状态码错误: %d %s", w.Code, w.Body.String())
+	}
+
+	_, kbIDs := lastAskKBScope(env.engine)
+	found := false
+	for _, id := range kbIDs {
+		if id == "kb-mine" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("SSE 检索范围应包含用户知识库: %v", kbIDs)
 	}
 }
 
@@ -748,6 +946,7 @@ func TestGetHistory(t *testing.T) {
 // AC10: 任务重试——failed → pending
 func TestRetryTask(t *testing.T) {
 	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
 	env.store.tasks["task-1"] = store.Task{
 		ID: "task-1", KBID: "kb-1", DocumentID: "doc-1",
 		Status: store.TaskStatusFailed, RetryCount: 3, ErrorMessage: "boom",
@@ -767,7 +966,8 @@ func TestRetryTask(t *testing.T) {
 // 非 failed 任务不可重试
 func TestRetryTaskNotFailed(t *testing.T) {
 	env := newTestEnv(t)
-	env.store.tasks["task-1"] = store.Task{ID: "task-1", Status: store.TaskStatusCompleted}
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
+	env.store.tasks["task-1"] = store.Task{ID: "task-1", KBID: "kb-1", Status: store.TaskStatusCompleted}
 
 	w := doReq(t, env.router, "POST", "/api/v1/tasks/task-1/retry", nil, testAPIKey)
 	if w.Code != 400 {

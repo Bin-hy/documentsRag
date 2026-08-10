@@ -55,6 +55,16 @@ CREATE TABLE IF NOT EXISTS chat_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_chat_history_session ON chat_history(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS users (
+    id         TEXT PRIMARY KEY,
+    provider   TEXT NOT NULL,
+    subject    TEXT NOT NULL,
+    name       TEXT NOT NULL DEFAULT '',
+    email      TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (provider, subject)
+);
 `
 
 // 知识库策略列迁移（幂等：已有库补列）
@@ -67,6 +77,35 @@ const chatHistorySourcesMigration = `
 ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS sources TEXT NOT NULL DEFAULT '';
 `
 
+// 知识库 owner 迁移（幂等：NULL = 系统级知识库；无外键约束，用户删除不在本版范围）
+const kbOwnerMigration = `
+ALTER TABLE knowledge_bases ADD COLUMN IF NOT EXISTS owner_id TEXT;
+`
+
+// api_keys MCP 权限列迁移（幂等：默认空 = 历史 Key 无任何 MCP 权限，spec F6）
+const apiKeyMCPPermissionsMigration = `
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_tools TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_kb_scope TEXT NOT NULL DEFAULT '';
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_kb_ids TEXT[] NOT NULL DEFAULT '{}';
+`
+
+// mcpAuditLogsDDL MCP 调用审计表（仅记录 api_key_id 引用与截断参数，绝不存 Secret，spec F7）
+const mcpAuditLogsDDL = `
+CREATE TABLE IF NOT EXISTS mcp_audit_logs (
+    id            BIGSERIAL PRIMARY KEY,
+    api_key_id    TEXT NOT NULL,
+    tool_name     TEXT NOT NULL,
+    params        TEXT NOT NULL DEFAULT '',
+    params_len    INT NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT '',
+    error_message TEXT NOT NULL DEFAULT '',
+    duration_ms   BIGINT NOT NULL DEFAULT 0,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_logs_created_at ON mcp_audit_logs(created_at);
+CREATE INDEX IF NOT EXISTS idx_mcp_audit_logs_api_key ON mcp_audit_logs(api_key_id, created_at);
+`
+
 // Migrate 执行建表语句（幂等）
 func (s *pgStore) Migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, schemaDDL); err != nil {
@@ -76,6 +115,15 @@ func (s *pgStore) Migrate(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, kbStrategyMigration); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, chatHistorySourcesMigration)
+	if _, err := s.pool.Exec(ctx, chatHistorySourcesMigration); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, kbOwnerMigration); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, apiKeyMCPPermissionsMigration); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, mcpAuditLogsDDL)
 	return err
 }

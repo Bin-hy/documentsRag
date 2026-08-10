@@ -2,7 +2,12 @@
 // 使用 fetch + ReadableStream 手写解析（EventSource 无法携带 Authorization 头，
 // 也无法用 AbortController 主动停止）。
 import type { ChatRequest, ChatSource, SSEEvent, ThinkingStep } from './types'
-import { getStoredApiKey } from './client'
+import { getStoredApiKey, getStoredToken } from './client'
+
+// 会话 JWT 优先 / API Key 兜底（SSE 不走 axios 拦截器，需手动附加）
+function bearerCredential(): string {
+  return getStoredToken() || getStoredApiKey()
+}
 
 /**
  * 发起流式问答。
@@ -20,7 +25,7 @@ export async function chatStream(
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      Authorization: `Bearer ${getStoredApiKey()}`,
+      Authorization: `Bearer ${bearerCredential()}`,
     },
     body: JSON.stringify(req),
     signal,

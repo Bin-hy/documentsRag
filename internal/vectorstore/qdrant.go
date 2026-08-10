@@ -194,6 +194,11 @@ func buildFilter(filter map[string]any) *pb.Filter {
 		switch v := val.(type) {
 		case string:
 			conditions = append(conditions, pb.NewMatchKeyword(key, v))
+		case []string:
+			// 多值匹配（如多知识库范围）：MatchKeywords = MatchAny(keywords...)
+			if len(v) > 0 {
+				conditions = append(conditions, pb.NewMatchKeywords(key, v...))
+			}
 		case int:
 			conditions = append(conditions, pb.NewMatchInt(key, int64(v)))
 		case int64:

@@ -31,6 +31,11 @@ func (h *handler) GetTask(c *gin.Context) {
 		Fail(c, CodeInternal, "查询任务失败")
 		return
 	}
+	// 经任务所属知识库校验访问权（越权一律 404）
+	if !h.ensureKBAccess(c, task.KBID) {
+		Fail(c, CodeNotFound, "任务不存在")
+		return
+	}
 	OK(c, task)
 }
 
@@ -57,6 +62,11 @@ func (h *handler) RetryTask(c *gin.Context) {
 			return
 		}
 		Fail(c, CodeInternal, "查询任务失败")
+		return
+	}
+	// 经任务所属知识库校验访问权（越权一律 404）
+	if !h.ensureKBAccess(c, task.KBID) {
+		Fail(c, CodeNotFound, "任务不存在")
 		return
 	}
 

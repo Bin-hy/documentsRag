@@ -64,7 +64,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "创建 API Key，明文仅返回一次（后续不可再查），库中只存 SHA-256 hash",
+                "description": "创建 API Key，明文仅返回一次（后续不可再查），库中只存 SHA-256 hash；仅系统级 API Key 可操作",
                 "consumes": [
                     "application/json"
                 ],
@@ -124,6 +124,12 @@
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/api.Response"
                         }
@@ -284,6 +290,221 @@
                 }
             }
         },
+        "/api/v1/auth/exchange": {
+            "post": {
+                "description": "用回调后拿到的一次性 ticket 换取会话 JWT；ticket 仅可成功消费一次",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "换取会话 JWT",
+                "parameters": [
+                    {
+                        "description": "一次性 ticket",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.exchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "token": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/github/callback": {
+            "get": {
+                "description": "GitHub OAuth2 回调；成功后 302 到 /login?ticket=xxx。校验失败不创建会话",
+                "tags": [
+                    "认证"
+                ],
+                "summary": "GitHub 回调",
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/github/login": {
+            "get": {
+                "description": "GitHub 使用 OAuth2 适配（非 OIDC），302 到 GitHub 授权页",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "发起 GitHub 登录",
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/me": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "返回当前凭据身份：apikey → {kind,is_bootstrap}；oidc → {kind,user_id,provider,name}",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "当前身份",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oidc/{provider}/callback": {
+            "get": {
+                "description": "OIDC 授权码回调；成功后 302 到 /login?ticket=xxx（一次性，前端换取 JWT）。校验失败不创建会话",
+                "tags": [
+                    "认证"
+                ],
+                "summary": "OIDC 回调",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "OIDC provider 名",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/oidc/{provider}/login": {
+            "get": {
+                "description": "按 provider 名发起 OIDC 授权码登录，302 重定向到对应 issuer 授权页",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "发起 OIDC 登录",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "OIDC provider 名（见 /auth/providers）",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/providers": {
+            "get": {
+                "description": "返回已启用的三方登录 Provider（name/type/display_name），不含 client_secret 等机密；未配置时为空数组",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "认证"
+                ],
+                "summary": "登录 Provider 列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/auth.ProviderView"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/chat": {
             "post": {
                 "security": [
@@ -291,7 +512,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止）",
+                "description": "接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）",
                 "consumes": [
                     "application/json"
                 ],
@@ -349,6 +570,41 @@
                         "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chat/enhancements": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "返回可用增强能力。当前能力：web_search（联网搜索）；available 表示后端是否已配置就绪（配置了 web_search.api_key）",
+                "tags": [
+                    "问答"
+                ],
+                "summary": "增强能力列表",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": true
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     }
                 }
@@ -414,6 +670,194 @@
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/chunks/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "按 chunk_id 从向量库取回该 chunk 的原文内容与来源文档信息，供引用来源点击查看",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "问答"
+                ],
+                "summary": "Chunk 原文",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "chunk ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "chunk_id": {
+                                                    "type": "string"
+                                                },
+                                                "content": {
+                                                    "type": "string"
+                                                },
+                                                "document_id": {
+                                                    "type": "string"
+                                                },
+                                                "filename": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/config": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "读取当前配置：可修改组（LLM/Embedding/Retriever/Reranker/Strategy/Loader）+ 只读组（Postgres/VectorStore/Server，需重启生效）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "配置"
+                ],
+                "summary": "配置视图",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ConfigView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "更新可修改配置（LLM/Embedding/Retriever/Reranker/Strategy/Loader）。需 bootstrap Key；写入文件并热重载，仅影响新请求。",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "配置"
+                ],
+                "summary": "更新配置",
+                "parameters": [
+                    {
+                        "description": "可修改配置字段",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.ConfigUpdateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ConfigView"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "$ref": "#/definitions/api.Response"
                         }
@@ -652,7 +1096,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "列出全部知识库，按创建时间倒序",
+                "description": "按当前身份返回知识库：登录用户仅返回自己创建的；系统级 API Key 返回全部。按创建时间倒序",
                 "produces": [
                     "application/json"
                 ],
@@ -674,7 +1118,7 @@
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/store.KnowledgeBase"
+                                                "$ref": "#/definitions/api.kbView"
                                             }
                                         }
                                     }
@@ -702,7 +1146,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "创建一个新的知识库，返回知识库完整信息",
+                "description": "创建一个新的知识库，返回知识库完整信息；登录用户创建的知识库仅本人与系统级 API Key 可见",
                 "consumes": [
                     "application/json"
                 ],
@@ -736,7 +1180,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/store.KnowledgeBase"
+                                            "$ref": "#/definitions/api.kbView"
                                         }
                                     }
                                 }
@@ -771,7 +1215,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "按 ID 查询单个知识库",
+                "description": "按 ID 查询单个知识库；无权访问返回 404",
                 "produces": [
                     "application/json"
                 ],
@@ -800,7 +1244,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/store.KnowledgeBase"
+                                            "$ref": "#/definitions/api.kbView"
                                         }
                                     }
                                 }
@@ -833,7 +1277,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "更新知识库的名称与描述",
+                "description": "更新知识库的名称与描述；无权访问返回 404",
                 "consumes": [
                     "application/json"
                 ],
@@ -874,7 +1318,7 @@
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/store.KnowledgeBase"
+                                            "$ref": "#/definitions/api.kbView"
                                         }
                                     }
                                 }
@@ -913,7 +1357,7 @@
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "删除知识库及其全部文档、向量与索引数据",
+                "description": "删除知识库及其全部文档、向量与索引数据；无权访问返回 404",
                 "produces": [
                     "application/json"
                 ],
@@ -1111,6 +1555,175 @@
         }
     },
     "definitions": {
+        "api.ConfigUpdateRequest": {
+            "type": "object",
+            "properties": {
+                "embedder": {
+                    "$ref": "#/definitions/api.EmbedderPatch"
+                },
+                "llm": {
+                    "$ref": "#/definitions/api.LLMPatch"
+                },
+                "loader": {
+                    "$ref": "#/definitions/api.LoaderPatch"
+                },
+                "rag_strategy": {
+                    "$ref": "#/definitions/config.StrategyConfig"
+                },
+                "reranker": {
+                    "$ref": "#/definitions/api.RerankerPatch"
+                },
+                "retriever": {
+                    "$ref": "#/definitions/api.RetrieverPatch"
+                }
+            }
+        },
+        "api.ConfigView": {
+            "type": "object",
+            "properties": {
+                "is_bootstrap": {
+                    "description": "当前 Key 是否为 bootstrap（前端据此允许编辑）",
+                    "type": "boolean"
+                },
+                "mutable": {
+                    "$ref": "#/definitions/api.MutableConfigView"
+                },
+                "read_only": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ReadOnlyConfig"
+                    }
+                }
+            }
+        },
+        "api.EmbedderPatch": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.EmbedderView": {
+            "type": "object",
+            "properties": {
+                "dimension": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.LLMPatch": {
+            "type": "object",
+            "properties": {
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "timeout": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LLMView": {
+            "type": "object",
+            "properties": {
+                "max_tokens": {
+                    "type": "integer"
+                },
+                "model": {
+                    "type": "string"
+                },
+                "temperature": {
+                    "type": "number"
+                },
+                "timeout": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LoaderPatch": {
+            "type": "object",
+            "properties": {
+                "min_readable_chars": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LoaderView": {
+            "type": "object",
+            "properties": {
+                "min_readable_chars": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.MutableConfigView": {
+            "type": "object",
+            "properties": {
+                "embedder": {
+                    "$ref": "#/definitions/api.EmbedderView"
+                },
+                "llm": {
+                    "$ref": "#/definitions/api.LLMView"
+                },
+                "loader": {
+                    "$ref": "#/definitions/api.LoaderView"
+                },
+                "rag_strategy": {
+                    "$ref": "#/definitions/config.StrategyConfig"
+                },
+                "reranker": {
+                    "$ref": "#/definitions/api.RerankerView"
+                },
+                "retriever": {
+                    "$ref": "#/definitions/api.RetrieverView"
+                }
+            }
+        },
+        "api.ReadOnlyConfig": {
+            "type": "object",
+            "properties": {
+                "key": {
+                    "type": "string"
+                },
+                "needs_restart": {
+                    "type": "boolean"
+                },
+                "value": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.RerankerPatch": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "top_n": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.RerankerView": {
+            "type": "object",
+            "properties": {
+                "model": {
+                    "type": "string"
+                },
+                "top_n": {
+                    "type": "integer"
+                }
+            }
+        },
         "api.Response": {
             "type": "object",
             "properties": {
@@ -1123,6 +1736,34 @@
                 }
             }
         },
+        "api.RetrieverPatch": {
+            "type": "object",
+            "properties": {
+                "bm25_weight": {
+                    "type": "number"
+                },
+                "top_k": {
+                    "type": "integer"
+                },
+                "vector_weight": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.RetrieverView": {
+            "type": "object",
+            "properties": {
+                "bm25_weight": {
+                    "type": "number"
+                },
+                "top_k": {
+                    "type": "integer"
+                },
+                "vector_weight": {
+                    "type": "number"
+                }
+            }
+        },
         "api.chatRequest": {
             "type": "object",
             "required": [
@@ -1130,6 +1771,10 @@
                 "session_id"
             ],
             "properties": {
+                "enhanced": {
+                    "description": "增强模式（function calling 工具，如 web_search）",
+                    "type": "boolean"
+                },
                 "kb_id": {
                     "description": "知识库范围，空表示不限定",
                     "type": "string"
@@ -1139,6 +1784,14 @@
                 },
                 "session_id": {
                     "type": "string"
+                },
+                "strategy": {
+                    "description": "单次请求策略覆盖",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/config.StrategyConfig"
+                        }
+                    ]
                 }
             }
         },
@@ -1163,6 +1816,48 @@
                     "type": "string"
                 },
                 "name": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "description": "知识库级策略",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/config.StrategyConfig"
+                        }
+                    ]
+                }
+            }
+        },
+        "api.exchangeRequest": {
+            "type": "object",
+            "required": [
+                "ticket"
+            ],
+            "properties": {
+                "ticket": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.kbView": {
+            "type": "object",
+            "properties": {
+                "createdAt": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "strategy": {
+                    "type": "string"
+                },
+                "updatedAt": {
                     "type": "string"
                 }
             }
@@ -1207,6 +1902,63 @@
                 },
                 "name": {
                     "type": "string"
+                },
+                "strategy": {
+                    "description": "知识库级策略（nil = 不修改）",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/config.StrategyConfig"
+                        }
+                    ]
+                }
+            }
+        },
+        "auth.ProviderView": {
+            "type": "object",
+            "properties": {
+                "display_name": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "type": {
+                    "description": "oidc / oauth2",
+                    "type": "string"
+                }
+            }
+        },
+        "config.StrategyConfig": {
+            "type": "object",
+            "properties": {
+                "data_sources": {
+                    "description": "DataSources 允许的数据源列表；空=未设置（合并后默认仅 vector_store）",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "decomposition": {
+                    "type": "string"
+                },
+                "fusion": {
+                    "type": "string"
+                },
+                "hyde": {
+                    "type": "string"
+                },
+                "query": {
+                    "type": "string"
+                },
+                "routing": {
+                    "type": "string"
+                },
+                "step_back": {
+                    "type": "string"
+                },
+                "thinking": {
+                    "description": "off / on，空=继承",
+                    "type": "string"
                 }
             }
         },
@@ -1217,6 +1969,38 @@
                     "type": "string"
                 },
                 "role": {
+                    "type": "string"
+                },
+                "sources": {
+                    "description": "引用来源 JSON 数组字符串（历史持久化用，空 = 无引用）",
+                    "type": "string"
+                },
+                "tool_call_id": {
+                    "description": "tool 结果消息回引的工具调用 ID",
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "description": "assistant 消息的工具调用列表",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/llm.ToolCall"
+                    }
+                }
+            }
+        },
+        "llm.ToolCall": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "description": "参数 JSON 字符串",
+                    "type": "string"
+                },
+                "id": {
+                    "description": "工具调用 ID（tool 结果消息回引用）",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "工具名",
                     "type": "string"
                 }
             }
@@ -1231,6 +2015,13 @@
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/rag.Source"
+                    }
+                },
+                "thinking": {
+                    "description": "思考链路（F8，关闭时省略）",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/rag.ThinkingStep"
                     }
                 }
             }
@@ -1253,8 +2044,70 @@
                 "score": {
                     "description": "检索分数",
                     "type": "number"
+                },
+                "source_type": {
+                    "description": "来源类型（vector_store / web_search 等）",
+                    "type": "string"
                 }
             }
+        },
+        "rag.ThinkingStep": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "description": "环节结构化数据"
+                },
+                "elapsed_ms": {
+                    "description": "环节耗时",
+                    "type": "integer"
+                },
+                "label": {
+                    "description": "前端展示标题",
+                    "type": "string"
+                },
+                "type": {
+                    "$ref": "#/definitions/rag.ThinkingStepType"
+                }
+            }
+        },
+        "rag.ThinkingStepType": {
+            "type": "string",
+            "enum": [
+                "routing",
+                "query_rewrite",
+                "multi_query",
+                "retrieval",
+                "rerank",
+                "chunks",
+                "decompose",
+                "step_back",
+                "hyde",
+                "tool"
+            ],
+            "x-enum-comments": {
+                "StepChunks": "最终目标 chunks",
+                "StepDecompose": "分解判定 + 子问题列表",
+                "StepHyDE": "假设文档",
+                "StepMultiQuery": "多查询变体生成",
+                "StepRerank": "重排序前后对比",
+                "StepRetrieval": "检索（单路或多路）",
+                "StepRewrite": "单查询改写",
+                "StepRouting": "路由判定",
+                "StepStepBack": "回退问题",
+                "StepTool": "工具调用（增强模式 function calling）"
+            },
+            "x-enum-varnames": [
+                "StepRouting",
+                "StepRewrite",
+                "StepMultiQuery",
+                "StepRetrieval",
+                "StepRerank",
+                "StepChunks",
+                "StepDecompose",
+                "StepStepBack",
+                "StepHyDE",
+                "StepTool"
+            ]
         },
         "store.Document": {
             "type": "object",
@@ -1284,34 +2137,13 @@
                     "type": "string"
                 },
                 "size": {
-                    "type": "integer",
-                    "format": "int64"
+                    "type": "integer"
                 },
                 "status": {
                     "description": "pending / processing / completed / failed",
                     "type": "string"
                 },
                 "taskID": {
-                    "type": "string"
-                }
-            }
-        },
-        "store.KnowledgeBase": {
-            "type": "object",
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "description": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "string"
-                },
-                "name": {
-                    "type": "string"
-                },
-                "updatedAt": {
                     "type": "string"
                 }
             }

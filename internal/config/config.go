@@ -1,9 +1,12 @@
 package config
 
 import (
+	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +25,7 @@ type Config struct {
 	Postgres    PostgresConfig    `yaml:"postgres"`
 	Server      ServerConfig      `yaml:"server"`
 	Loader      LoaderConfig      `yaml:"loader"`
+	OIDC        OIDCConfig        `yaml:"oidc"` // 三方登录 Provider（自定义 OIDC + GitHub OAuth2）
 }
 
 // WebSearchConfig 联网搜索提供者配置
@@ -214,6 +218,52 @@ type ServerConfig struct {
 	AuthEnabled     bool   `yaml:"auth_enabled"`
 	BootstrapAPIKey string `yaml:"bootstrap_api_key"` // 仅首次启动种子用
 	RateLimitQPS    int    `yaml:"rate_limit_qps"`    // 0 表示不限制
+	MCP             MCPConfig `yaml:"mcp"`            // MCP Server（只读 RAG 能力）
+}
+
+// MCPConfig MCP Server 配置（默认关闭，安全默认 D7）
+type MCPConfig struct {
+	// Enabled 是否启用 MCP Server（默认 false，显式开启后才挂载 /mcp）
+	Enabled bool `yaml:"enabled"`
+	// Path MCP 端点路径（默认 "/mcp"）
+	Path string `yaml:"path"`
+	// AuditParamLimit 审计参数截断长度（字符，默认 2000）
+	AuditParamLimit int `yaml:"audit_param_limit"`
+}
+
+// 登录 Provider 类型与内置名称常量
+const (
+	ProviderTypeOIDC   = "oidc"   // 标准 OIDC（授权码 + ID Token）
+	ProviderTypeOAuth2 = "oauth2" // OAuth2 适配（当前仅内置 GitHub）
+	ProviderNameGithub = "github"
+)
+
+// OIDCConfig 三方登录配置（自定义 Provider 用 OIDC，GitHub 用 OAuth2 适配）
+type OIDCConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	PublicURL string `yaml:"public_url"` // 外部可访问基址，用于拼回调 URL；Enabled 时必填
+	JWTSecret string `yaml:"jwt_secret"` // 空 = 启动时自动生成随机密钥（重启后旧会话失效）
+
+	// JWTExpireMinutes 会话 JWT 有效期（分钟），默认 120
+	JWTExpireMinutes int              `yaml:"jwt_expire_minutes"`
+	Providers        []ProviderConfig `yaml:"providers"`
+}
+
+// ProviderConfig 单个登录 Provider
+// type=oidc：Issuer 必填，默认 scope openid profile email
+// type=oauth2：不要求 Issuer，仅允许 name=github，默认 scope read:user（最小权限，不请求 email）
+// PermissiveSub：兼容不规范 OIDC 服务商把 sub 签发为数字的场景（仍保留签名/iss/aud/exp/nbf/nonce 全量校验，
+// 仅将数字 sub 确定性转为字符串）；默认 false 保持严格规范。
+type ProviderConfig struct {
+	Name         string   `yaml:"name"`          // 标识，须可安全用于 URL path（^[a-zA-Z0-9_-]+$）
+	Type         string   `yaml:"type"`          // oidc（默认）/ oauth2
+	DisplayName  string   `yaml:"display_name"`  // 前端按钮文案，空 = Name
+	ClientID     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	Issuer       string   `yaml:"issuer"`        // 仅 type=oidc；OIDC discovery 地址
+	Scope        []string `yaml:"scope"`         // 空 = 按 type 给默认值
+	RedirectURL  string   `yaml:"redirect_url"`  // 可选；默认 <public_url>/api/v1/auth/{oidc/{name}|github}/callback
+	PermissiveSub bool   `yaml:"permissive_sub"` // 兼容数字 sub（见上注释）
 }
 
 // LoadConfig 加载配置文件。
@@ -252,6 +302,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -428,4 +481,87 @@ func (c *Config) applyDefaults() {
 	if c.Server.TaskMaxRetries <= 0 {
 		c.Server.TaskMaxRetries = 3
 	}
+	// MCP Server 默认值（Enabled 零值即 false，安全默认：显式开启才挂载）
+	if c.Server.MCP.Path == "" {
+		c.Server.MCP.Path = "/mcp"
+	}
+	if c.Server.MCP.AuditParamLimit <= 0 {
+		c.Server.MCP.AuditParamLimit = 2000
+	}
+	// 三方登录默认值
+	if c.OIDC.JWTExpireMinutes <= 0 {
+		c.OIDC.JWTExpireMinutes = 120
+	}
+	for i := range c.OIDC.Providers {
+		p := &c.OIDC.Providers[i]
+		if p.Type == "" {
+			p.Type = ProviderTypeOIDC
+		}
+		if p.DisplayName == "" {
+			p.DisplayName = p.Name
+		}
+		if len(p.Scope) == 0 {
+			if p.Type == ProviderTypeOAuth2 && p.Name == ProviderNameGithub {
+				p.Scope = []string{"read:user"} // GitHub 最小权限，不请求 email
+			} else {
+				p.Scope = []string{"openid", "profile", "email"}
+			}
+		}
+	}
+}
+
+// providerNamePattern Provider Name 合法字符（须可安全用于 URL path）
+const providerNamePattern = `^[a-zA-Z0-9_-]+$`
+
+// Validate 静态校验配置合法性（Load → ApplyDefaults → Validate）。
+// 运行时依赖（OIDC discovery/JWKS）由 auth.NewManager 校验，不在此层。
+func (c *Config) Validate() error {
+	var errs []string
+	if c.OIDC.Enabled {
+		if c.OIDC.PublicURL == "" {
+			errs = append(errs, "oidc.public_url 必填（oidc.enabled=true 时）")
+		}
+		seen := make(map[string]bool, len(c.OIDC.Providers))
+		for i, p := range c.OIDC.Providers {
+			where := fmt.Sprintf("oidc.providers[%d] (%s)", i, p.Name)
+			if p.Name == "" {
+				errs = append(errs, where+": name 不能为空")
+			} else {
+				if !regexp.MustCompile(providerNamePattern).MatchString(p.Name) {
+					errs = append(errs, where+": name 含非法字符，须匹配 "+providerNamePattern)
+				}
+				if seen[p.Name] {
+					errs = append(errs, where+": name 重复")
+				}
+				seen[p.Name] = true
+			}
+			if p.ClientID == "" {
+				errs = append(errs, where+": client_id 不能为空")
+			}
+			if p.ClientSecret == "" {
+				errs = append(errs, where+": client_secret 不能为空")
+			}
+			switch p.Type {
+			case ProviderTypeOIDC:
+				if p.Issuer == "" {
+					errs = append(errs, where+": type=oidc 时 issuer 必填")
+				}
+			case ProviderTypeOAuth2:
+				if p.Name != ProviderNameGithub {
+					errs = append(errs, where+": type=oauth2 仅支持内置 github provider")
+				}
+			default:
+				errs = append(errs, where+": type 非法（oidc/oauth2）")
+			}
+			if p.RedirectURL != "" {
+				if _, err := url.Parse(p.RedirectURL); err != nil || !strings.Contains(p.RedirectURL, "://") {
+					errs = append(errs, where+": redirect_url 不是合法 URL")
+				}
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("配置校验失败: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }

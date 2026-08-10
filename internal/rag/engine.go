@@ -56,7 +56,8 @@ type Engine interface {
 
 // AskOptions 问答选项
 type AskOptions struct {
-	KBID        string                 // 知识库范围，空表示不限定
+	KBID        string                 // 知识库范围（单值，优先于 KBIDs）
+	KBIDs       []string               // 知识库范围（多值：登录用户不指定时展开为其可访问的全部知识库）
 	KBStrategy  *config.StrategyConfig // 知识库级策略（nil = 用全局）
 	ReqStrategy *config.StrategyConfig // 请求级策略（nil = 未覆盖）
 	CfgSnapshot *config.Config         // 请求级配置快照（nil = 用引擎构建时配置）
@@ -75,6 +76,11 @@ type AskOption func(*AskOptions)
 // WithKBID 限定知识库范围（检索时按 kb_id 过滤）
 func WithKBID(kbID string) AskOption {
 	return func(o *AskOptions) { o.KBID = kbID }
+}
+
+// WithKBIDs 限定多个知识库范围（登录用户不指定 kb_id 时，检索其可访问的全部知识库）
+func WithKBIDs(kbIDs []string) AskOption {
+	return func(o *AskOptions) { o.KBIDs = kbIDs }
 }
 
 // WithStrategy 设置知识库级与请求级策略（三级覆盖：请求 > 知识库 > 全局）
@@ -876,7 +882,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			chunks, err := e.retriever.SearchMulti(ctx, retriever.RetrieveRequest{
 				Query:  query,
 				TopK:   ragCfg.TopK,
-				Filter: kbFilter(o.KBID),
+				Filter: kbFilter(o.KBID, o.KBIDs...),
 				Trace:  traceSinkForRequest(sink, query),
 			}, queries)
 			if err != nil {
@@ -943,14 +949,14 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{
 				Query:  query,
 				TopK:   ragCfg.TopK,
-				Filter: kbFilter(o.KBID),
+				Filter: kbFilter(o.KBID, o.KBIDs...),
 				Trace:  traceSinkForRequest(sink, query),
 			})
 		} else {
 			chunks, err = src.Search(ctx, datasource.SearchRequest{
 				Query:  query,
 				TopK:   ragCfg.TopK,
-				Filter: kbFilter(o.KBID),
+				Filter: kbFilter(o.KBID, o.KBIDs...),
 			})
 			slog.Info("数据源检索完成", "data_source", o.DataSource,
 				"检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
@@ -961,7 +967,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{
 			Query:  query,
 			TopK:   ragCfg.TopK,
-			Filter: kbFilter(o.KBID),
+			Filter: kbFilter(o.KBID, o.KBIDs...),
 			Trace:  traceSinkForRequest(sink, query),
 		})
 	}
@@ -1016,12 +1022,28 @@ func (e *RAGEngine) rewriteQuery(ctx context.Context, history []llm.Message, que
 	return rewritten, nil
 }
 
-// kbFilter 构造知识库过滤条件（空 kbID 返回 nil 表示不过滤）
-func kbFilter(kbID string) map[string]any {
-	if kbID == "" {
-		return nil
+// kbFilter 构造知识库过滤条件：
+//   - kbID 与 kbIDs 均空 → nil（不过滤，API Key 系统级"不限"场景）
+//   - 单一知识库 → {"kb_id": id}（兼容现有单值）
+//   - 多个知识库 → {"kb_id": [ids]}（向量库 MatchKeywords / BM25 集合过滤）
+func kbFilter(kbID string, kbIDs ...string) map[string]any {
+	ids := make([]string, 0, len(kbIDs)+1)
+	if kbID != "" {
+		ids = append(ids, kbID)
 	}
-	return map[string]any{"kb_id": kbID}
+	for _, id := range kbIDs {
+		if id != "" {
+			ids = append(ids, id)
+		}
+	}
+	switch len(ids) {
+	case 0:
+		return nil
+	case 1:
+		return map[string]any{"kb_id": ids[0]}
+	default:
+		return map[string]any{"kb_id": ids}
+	}
 }
 
 // multiQuery 调用 LLM 生成多查询变体（JSON 数组），返回 [原问题] + 变体。

@@ -17,6 +17,7 @@ type BM25Index interface {
 	Remove(id string)
 	Search(query string, topK int) []BM25Result
 	SearchFiltered(query string, topK int, kbID string) []BM25Result // 空 kbID 不过滤
+	SearchFilteredByKBs(query string, topK int, kbIDs []string) []BM25Result // 空集合不过滤
 	Rebuild(docs []BM25Doc)
 	DocCount() int
 }
@@ -124,6 +125,14 @@ func (idx *defaultBM25Index) Search(query string, topK int) []BM25Result {
 
 // SearchFiltered 按知识库过滤的 BM25 检索；kbID 为空时不过滤
 func (idx *defaultBM25Index) SearchFiltered(query string, topK int, kbID string) []BM25Result {
+	if kbID == "" {
+		return idx.SearchFilteredByKBs(query, topK, nil)
+	}
+	return idx.SearchFilteredByKBs(query, topK, []string{kbID})
+}
+
+// SearchFilteredByKBs 按知识库集合过滤的 BM25 检索；kbIDs 为空时不过滤
+func (idx *defaultBM25Index) SearchFilteredByKBs(query string, topK int, kbIDs []string) []BM25Result {
 	tokens := idx.tokenizer.Tokenize(query)
 	if len(tokens) == 0 {
 		return nil
@@ -135,6 +144,11 @@ func (idx *defaultBM25Index) SearchFiltered(query string, topK int, kbID string)
 	n := float64(len(idx.docLen))
 	if n == 0 {
 		return nil
+	}
+
+	allowed := make(map[string]bool, len(kbIDs))
+	for _, id := range kbIDs {
+		allowed[id] = true
 	}
 
 	scores := make(map[string]float64)
@@ -149,8 +163,8 @@ func (idx *defaultBM25Index) SearchFiltered(query string, topK int, kbID string)
 		idf := math.Log((n-df+0.5)/(df+0.5) + 1)
 
 		for _, p := range postings {
-			// 知识库过滤（在锁内读取 docKB，安全）
-			if kbID != "" && idx.docKB[p.docID] != kbID {
+			// 知识库过滤（在锁内读取 docKB，安全）：空集合不过滤
+			if len(allowed) > 0 && !allowed[idx.docKB[p.docID]] {
 				continue
 			}
 			dl := float64(idx.docLen[p.docID])
@@ -187,7 +201,7 @@ func (idx *defaultBM25Index) Rebuild(docs []BM25Doc) {
 	idx.mu.Unlock()
 
 	for _, doc := range docs {
-		idx.Add(doc.ID, doc.Content, "")
+		idx.Add(doc.ID, doc.Content, doc.KBID)
 	}
 }
 

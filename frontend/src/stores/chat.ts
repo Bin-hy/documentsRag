@@ -1,6 +1,7 @@
 // 对话状态：会话索引（本地持久化）、消息、流式问答
 import { defineStore } from 'pinia'
 import { chatStream } from '../api/chat'
+import { getStoredApiKey, getStoredToken } from '../api/client'
 import type { ChatSource, SessionMeta, ThinkingStep } from '../api/types'
 
 const SESSIONS_STORAGE = 'binrag_sessions'
@@ -76,7 +77,7 @@ export const useChatStore = defineStore('chat', {
       this.messages = []
       try {
         const resp = await fetch(`/api/v1/chat/history?session_id=${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${localStorage.getItem('binrag_api_key') ?? ''}` },
+          headers: { Authorization: `Bearer ${getStoredToken() || getStoredApiKey()}` },
         })
         if (resp.ok) {
           const body = await resp.json()
@@ -105,10 +106,17 @@ export const useChatStore = defineStore('chat', {
       }
     },
 
-    /** 发送提问：追加消息 → 流式接收 */
-    async send(question: string) {
+    /** 发送提问：追加消息 → 流式接收
+     *  @param kbId 知识库 ID（后端要求必填）。优先使用当前会话绑定的知识库，
+     *              无会话时用该值创建新会话（新会话的知识库即生效）。
+     */
+    async send(question: string, kbId = '') {
       if (!question.trim() || this.streaming) return
-      const sessionId = this.activeSessionId || this.newSession().id
+      let sessionId = this.activeSessionId
+      if (!sessionId) {
+        sessionId = this.newSession(kbId).id
+      }
+      const effectiveKb = this.activeSession?.kbId ?? kbId
 
       this.messages.push({ role: 'user', content: question })
       this.messages.push({ role: 'assistant', content: '', sources: [], thinking: [] })
@@ -131,7 +139,7 @@ export const useChatStore = defineStore('chat', {
           {
             session_id: sessionId,
             question,
-            kb_id: this.activeSession?.kbId ?? '',
+            kb_id: effectiveKb,
             enhanced: this.enhanced,
           },
           (ev) => {

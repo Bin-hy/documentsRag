@@ -99,13 +99,13 @@ func (r *defaultRetriever) searchFused(ctx context.Context, query string, topK i
 		vectorResults, vectorErr = r.vectorSearch(ctx, query, topK, filter)
 	}()
 
-	// BM25 检索（可选，按 kb_id 过滤）
-	kbID, _ := filter["kb_id"].(string)
+	// BM25 检索（可选，按 kb_id 集合过滤）
+	kbIDs := filterKBIDs(filter)
 	if r.config.EnableBM25 && r.bm25Index != nil && r.bm25Index.DocCount() > 0 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			bm25Results = r.bm25Index.SearchFiltered(query, topK, kbID)
+			bm25Results = r.bm25Index.SearchFilteredByKBs(query, topK, kbIDs)
 		}()
 	}
 
@@ -138,6 +138,25 @@ func (r *defaultRetriever) searchFused(ctx context.Context, query string, topK i
 		method = "hybrid"
 	}
 	return fusedResults, method, nil
+}
+
+// filterKBIDs 从检索 filter 中解析知识库范围（单值 string 或多值 []string），空返回 nil（不过滤）
+func filterKBIDs(filter map[string]any) []string {
+	raw, ok := filter["kb_id"]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []string:
+		return v
+	default:
+		return nil
+	}
 }
 
 // rerankIfEnabled 统一的整体重排入口：EnableReranker 关闭或 reranker 失败时原样返回

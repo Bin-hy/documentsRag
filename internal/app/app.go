@@ -12,13 +12,16 @@ import (
 	"log/slog"
 	"os"
 	"sync/atomic"
+	"time"
 
 	"github.com/Bin-hy/bin-rag/internal/api"
+	"github.com/Bin-hy/bin-rag/internal/auth"
 	"github.com/Bin-hy/bin-rag/internal/chunker"
 	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/embedding"
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/loader"
+	"github.com/Bin-hy/bin-rag/internal/mcp"
 	"github.com/Bin-hy/bin-rag/internal/pipeline"
 	"github.com/Bin-hy/bin-rag/internal/rag"
 	"github.com/Bin-hy/bin-rag/internal/reranker"
@@ -47,6 +50,9 @@ type App struct {
 
 	router *gin.Engine
 	cancel context.CancelFunc
+
+	// auditSink MCP 异步审计 worker（Enabled 时创建，Close 时 Shutdown flush，plan D8）
+	auditSink *mcp.AuditSink
 }
 
 // New 装配完整应用：连接 PostgreSQL → 迁移 → bootstrap Key → 基础设施
@@ -125,6 +131,16 @@ func New(cfg *config.Config) (*App, error) {
 
 	cfgMgr := config.NewConfigManager(cfgFile(cfg), cfg)
 
+	// 认证管理器（多 Provider 登录 + 会话 JWT；OIDC discovery 失败即装配失败）
+	authMgr, err := auth.NewManager(&cfg.OIDC)
+	if err != nil {
+		cancel()
+		st.Close()
+		vs.Close()
+		worker.Shutdown()
+		return nil, fmt.Errorf("初始化认证管理器失败: %w", err)
+	}
+
 	router := api.NewRouter(api.Dependencies{
 		Config:    cfg.Server,
 		LoaderCfg: cfg.Loader,
@@ -145,6 +161,7 @@ func New(cfg *config.Config) (*App, error) {
 			return rt.Engine
 		},
 		Store:    st,
+		Auth:     authMgr,
 		VS:       vs,
 		BM25:     bm25,
 		Registry: loader.NewDefaultRegistry(),
@@ -155,6 +172,34 @@ func New(cfg *config.Config) (*App, error) {
 		st.Close()
 		worker.Shutdown()
 		return nil, fmt.Errorf("挂载前端静态资源失败: %w", err)
+	}
+
+	// MCP Server（默认关闭，显式开启才挂载 /mcp，plan D7）
+	var auditSink *mcp.AuditSink
+	if cfg.Server.MCP.Enabled {
+		auditSink = mcp.NewAuditSink(st, 1024, cfg.Server.MCP.AuditParamLimit)
+		mcpHandler := mcp.NewHandler(mcp.Dependencies{
+			Config: cfg.Server,
+			Store:  st,
+			Engine: func() rag.Engine {
+				rt := components.Load()
+				if rt == nil {
+					return nil
+				}
+				return rt.Engine
+			},
+			RT: func() retriever.Retriever {
+				rt := components.Load()
+				if rt == nil {
+					return nil
+				}
+				return rt.Retriever
+			},
+			CfgMgr: cfgMgr,
+			Audit:  auditSink,
+		})
+		router.Any(cfg.Server.MCP.Path, gin.WrapH(mcpHandler))
+		slog.Info("MCP Server 已挂载", "path", cfg.Server.MCP.Path)
 	}
 
 	app := &App{
@@ -168,6 +213,7 @@ func New(cfg *config.Config) (*App, error) {
 		components:     components,
 		cfgMgr:         cfgMgr,
 		router:         router,
+		auditSink:      auditSink,
 		cancel:         cancel,
 	}
 	return app, nil
@@ -199,9 +245,14 @@ func (a *App) Components() *RuntimeComponents {
 	return a.components.Load()
 }
 
-// Close 优雅释放资源：停止 worker（等待当前任务）、关闭数据库连接、取消上下文。
+// Close 优雅释放资源：停止 worker（等待当前任务）、flush 审计、关闭数据库连接、取消上下文。
 func (a *App) Close() error {
 	a.worker.Shutdown()
+	if a.auditSink != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		a.auditSink.Shutdown(ctx)
+		cancel()
+	}
 	a.cancel()
 	a.st.Close()
 	return nil

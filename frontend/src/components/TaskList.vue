@@ -108,11 +108,12 @@ async function remove(doc: Document) {
 <style scoped>
 .error-text {
   margin: 0;
-  padding: 12px;
+  padding: 14px;
   max-height: 240px;
   overflow: auto;
-  background: var(--br-hover);
-  border-radius: 6px;
+  background: var(--br-bg-inset);
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-md);
   font-size: 13px;
   white-space: pre-wrap;
   word-break: break-all;

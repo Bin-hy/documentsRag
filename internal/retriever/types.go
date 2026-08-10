@@ -52,4 +52,5 @@ type BM25Result struct {
 type BM25Doc struct {
 	ID      string
 	Content string
+	KBID    string // 知识库归属（kb 过滤用）；空表示系统级/不限
 }

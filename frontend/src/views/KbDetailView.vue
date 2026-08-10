@@ -70,7 +70,7 @@ onUnmounted(() => {
 <template>
   <div class="kb-detail">
     <div class="detail-head">
-      <el-button text :icon="ArrowLeft" @click="router.push('/kb')">返回</el-button>
+      <el-button text :icon="ArrowLeft" class="back-btn" @click="router.push('/kb')">返回</el-button>
       <div class="detail-info">
         <h2 class="detail-name">{{ kbName }}</h2>
         <p v-if="kbDescription" class="detail-desc">{{ kbDescription }}</p>
@@ -127,14 +127,19 @@ onUnmounted(() => {
 
 <style scoped>
 .kb-detail {
-  padding: 16px 24px;
+  padding: 20px 28px;
 }
 
 .detail-head {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  margin-bottom: 16px;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.back-btn {
+  margin-top: 2px;
+  border-radius: var(--br-radius-pill);
 }
 
 .detail-info {
@@ -143,32 +148,39 @@ onUnmounted(() => {
 
 .detail-name {
   margin: 0;
-  font-size: 20px;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .detail-desc {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: var(--br-text-secondary);
-  font-size: 13px;
+  font-size: 13.5px;
 }
 
+/* 卡片化表面 */
 .strategy-section {
-  margin-bottom: 16px;
-  padding: 12px 16px;
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 8px;
+  margin-bottom: 18px;
+  padding: 18px 20px;
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-lg);
+  background: var(--br-bg-card);
+  box-shadow: var(--br-shadow-sm);
 }
 
 .strategy-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .strategy-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .strategy-form {
@@ -176,18 +188,20 @@ onUnmounted(() => {
 }
 
 .doc-section {
-  margin-top: 20px;
+  margin-top: 22px;
 }
 
 .doc-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .doc-title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 </style>

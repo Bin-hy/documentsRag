@@ -89,20 +89,22 @@ onMounted(() => {
 
     <el-row :gutter="16" v-loading="kbStore.loading">
       <el-col v-for="kb in kbStore.kbs" :key="kb.ID" :xs="24" :sm="12" :md="8" :lg="6">
-        <el-card class="kb-card" shadow="hover" @click="enter(kb)">
+        <div class="kb-card" @click="enter(kb)">
           <div class="kb-card-head">
-            <el-icon class="kb-icon"><Folder /></el-icon>
+            <span class="kb-icon">
+              <el-icon :size="18"><Folder /></el-icon>
+            </span>
             <span class="kb-name br-text-ellipsis">{{ kb.Name }}</span>
           </div>
           <p class="kb-desc">{{ kb.Description || '暂无描述' }}</p>
           <div class="kb-card-foot">
-            <span class="br-muted">{{ new Date(kb.CreatedAt).toLocaleDateString() }}</span>
+            <span class="br-muted kb-date">{{ new Date(kb.CreatedAt).toLocaleDateString() }}</span>
             <div class="kb-actions" @click.stop>
               <el-button size="small" text :icon="Edit" @click="openEdit(kb)">编辑</el-button>
               <el-button size="small" text type="danger" :icon="Delete" @click="remove(kb)">删除</el-button>
             </div>
           </div>
-        </el-card>
+        </div>
       </el-col>
     </el-row>
 
@@ -129,59 +131,99 @@ onMounted(() => {
 
 <style scoped>
 .kb-page {
-  padding: 20px 24px;
+  padding: 24px 28px;
 }
 
 .page-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 20px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
+/* 知识库卡片：双贝泽尔结构（外层壳 + 内芯），去默认边框+阴影通用卡 */
 .kb-card {
   margin-bottom: 16px;
+  padding: 16px;
+  border-radius: var(--br-radius-lg);
+  background: var(--br-bg-card);
+  border: 1px solid var(--br-border);
+  box-shadow: var(--br-shadow-sm);
   cursor: pointer;
-  transition: transform 0.15s ease;
+  transition:
+    transform var(--br-transition-base),
+    box-shadow var(--br-transition-base),
+    border-color var(--br-transition-base);
 }
 
 .kb-card:hover {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+  box-shadow: var(--br-shadow-md);
+  border-color: var(--br-primary-soft-2);
+}
+
+.kb-card:active {
+  transform: translateY(-1px) scale(0.995);
 }
 
 .kb-card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .kb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  background: var(--br-primary-soft);
   color: var(--br-primary);
-  font-size: 20px;
+  transition: background-color var(--br-transition-fast);
+}
+
+.kb-card:hover .kb-icon {
+  background: var(--br-primary);
+  color: #fff;
 }
 
 .kb-name {
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .kb-desc {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   min-height: 20px;
   color: var(--br-text-secondary);
   font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .kb-card-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-top: 12px;
+  border-top: 1px solid var(--br-border);
+}
+
+.kb-date {
   font-size: 12px;
 }
 </style>

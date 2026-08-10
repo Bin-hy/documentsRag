@@ -5,18 +5,27 @@ import (
 	"encoding/hex"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Bin-hy/bin-rag/internal/auth"
 	"github.com/Bin-hy/bin-rag/internal/store"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/time/rate"
 )
 
-// Auth API Key 认证中间件（Authorization: Bearer <key>）
-// enabled 为 false 时放行（本地开发用）；bootstrapKey 非空时，命中该 Key 的请求标记为
-// context["is_bootstrap"]=true（用于配置修改等高权限操作）
-func Auth(s store.Store, enabled bool, bootstrapKey string) gin.HandlerFunc {
+// jwtShapeRe JWT 三段式结构判别（不使用 binrag_ 前缀作为认证分支条件）：
+// header.payload.signature，均为 base64url 字符。
+// 符合该形态的 token 才进入 JWT 本地验签；验签失败直接 401，不再尝试 API Key。
+var jwtShapeRe = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
+
+// Auth 认证中间件（Authorization: Bearer <token>），同时接受两种凭据：
+//   - 会话 JWT（登录用户）：符合三段式结构才本地验签，成功 → Kind=oidc Identity；失败 → 直接 401
+//   - 系统级 API Key（含 bootstrap，任意字符串格式）：走现有 SHA-256 查库流程
+//
+// enabled 为 false 时放行（本地开发用）。认证路径无外部网络调用（N5）。
+func Auth(s store.Store, authMgr *auth.Manager, enabled bool, bootstrapKey string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !enabled {
 			c.Next()
@@ -34,6 +43,21 @@ func Auth(s store.Store, enabled bool, bootstrapKey string) gin.HandlerFunc {
 			return
 		}
 
+		// JWT 形态：本地验签（一次），失败直接 401，不再查询 API Key
+		if jwtShapeRe.MatchString(token) {
+			claims, err := authMgr.VerifyJWT(token)
+			if err != nil {
+				slog.Warn("会话 JWT 校验失败", "err", err)
+				Fail(c, CodeUnauthorized, "无效或过期的会话")
+				c.Abort()
+				return
+			}
+			auth.SetIdentity(c, auth.Identity{Kind: auth.KindUser, UserID: claims.UserID, Provider: claims.Provider})
+			c.Next()
+			return
+		}
+
+		// 非 JWT 形态：现有 API Key 流程（至多一次查询）
 		sum := sha256.Sum256([]byte(token))
 		hash := hex.EncodeToString(sum[:])
 
@@ -52,8 +76,10 @@ func Auth(s store.Store, enabled bool, bootstrapKey string) gin.HandlerFunc {
 		}
 
 		_ = s.TouchAPIKey(ctx, key.ID)
+		isBootstrap := bootstrapKey != "" && token == bootstrapKey
+		auth.SetIdentity(c, auth.Identity{Kind: auth.KindAPIKey, APIKeyID: key.ID, IsBootstrap: isBootstrap})
 		c.Set("api_key_id", key.ID)
-		c.Set("is_bootstrap", bootstrapKey != "" && token == bootstrapKey)
+		c.Set("is_bootstrap", isBootstrap)
 		c.Next()
 	}
 }

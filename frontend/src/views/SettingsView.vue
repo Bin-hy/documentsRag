@@ -191,21 +191,31 @@ onMounted(load)
 
 <style scoped>
 .settings {
-  padding: 16px 24px;
+  padding: 24px 28px;
+  max-width: 1080px;
 }
 
 .page-title {
-  margin: 0 0 16px;
-  font-size: 20px;
+  margin: 0 0 20px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .section {
   margin-bottom: 24px;
+  padding: 20px 24px;
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-lg);
+  background: var(--br-bg-card);
+  box-shadow: var(--br-shadow-sm);
 }
 
 .section-title {
-  margin: 0 0 12px;
+  margin: 0 0 16px;
   font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .mb16 {

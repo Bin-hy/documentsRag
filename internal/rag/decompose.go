@@ -112,11 +112,11 @@ func (e *RAGEngine) judgeStepBack(ctx context.Context, question string) (stepBac
 }
 
 // searchSubQuery 检索单个查询（Multi-Query 启用时用 SearchMulti），返回检索结果
-func (e *RAGEngine) searchSubQuery(ctx context.Context, query string, kbID string) ([]retriever.RetrieveResult, error) {
+func (e *RAGEngine) searchSubQuery(ctx context.Context, query string, kbID string, kbIDs ...string) ([]retriever.RetrieveResult, error) {
 	req := retriever.RetrieveRequest{
 		Query:      query,
 		TopK:       e.cfg.TopK,
-		Filter:     kbFilter(kbID),
+		Filter:     kbFilter(kbID, kbIDs...),
 		SkipRerank: true, // 路内不 rerank：由 tryDecompose/tryStepBack 汇总后统一整体重排（F3/F4）
 	}
 	if e.cfg.MultiQueryOn() {
@@ -167,7 +167,7 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 		// 顺序：前序子问题的检索上下文拼入后续 prompt 作参考（简化：顺序执行，逐个子问题独立检索）
 		subChunks = make([][]retriever.RetrieveResult, len(subs))
 		for i, s := range subs {
-			chunks, serr := e.searchSubQuery(ctx, s, o.KBID)
+			chunks, serr := e.searchSubQuery(ctx, s, o.KBID, o.KBIDs...)
 			if serr != nil {
 				slog.Warn("子问题检索失败，忽略该子问题", "sub", s, "err", serr)
 				continue
@@ -190,7 +190,7 @@ func (e *RAGEngine) tryDecompose(ctx context.Context, sessionID string, question
 				defer wg.Done()
 				sem <- struct{}{}
 				defer func() { <-sem }()
-				chunks, serr := e.searchSubQuery(ctx, s, o.KBID)
+				chunks, serr := e.searchSubQuery(ctx, s, o.KBID, o.KBIDs...)
 				if serr != nil {
 					slog.Warn("子问题检索失败，忽略该子问题", "sub", s, "err", serr)
 					return
@@ -277,12 +277,12 @@ func (e *RAGEngine) tryStepBack(ctx context.Context, sessionID string, question 
 	})
 
 	// 2. 回退问题检索 + 原问题检索
-	backChunks, err := e.searchSubQuery(ctx, sb.StepBackQuery, o.KBID)
+	backChunks, err := e.searchSubQuery(ctx, sb.StepBackQuery, o.KBID, o.KBIDs...)
 	if err != nil {
 		slog.Warn("回退问题检索失败，降级常规路径", "err", err)
 		return nil, false, err
 	}
-	origChunks, err := e.searchSubQuery(ctx, question, o.KBID)
+	origChunks, err := e.searchSubQuery(ctx, question, o.KBID, o.KBIDs...)
 	if err != nil {
 		slog.Warn("原问题检索失败，降级常规路径", "err", err)
 		return nil, false, err

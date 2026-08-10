@@ -209,4 +209,48 @@ server:
   bootstrap_api_key: ""
   # 全局限流 QPS（0 表示不限制）
   rate_limit_qps: 0
+  # MCP Server（只读 RAG 能力，默认关闭——显式 enabled: true 后才挂载 /mcp）
+  mcp:
+    enabled: false
+    path: "/mcp"
+    audit_param_limit: 2000
+
+# 三方登录配置（可选）
+# 自定义 Provider 使用 OIDC（type: oidc）；GitHub 使用 OAuth2 适配（type: oauth2，name 固定为 github）
+# 启用后：public_url 必填（用于拼回调地址），OIDC provider 启动时执行 discovery（失败则启动失败）
+# 注意：GitHub 无用户 OIDC 端点，仅支持 OAuth2；回调地址需在各 Provider 后台登记
+#   OIDC:   <public_url>/api/v1/auth/oidc/{name}/callback
+#   GitHub: <public_url>/api/v1/auth/github/callback
+oidc:
+  enabled: false
+  # 外部可访问基址（反向代理/域名；桌面版不适用，保持 false）
+  public_url: "https://rag.example.com"
+  # 会话 JWT 密钥（留空 = 启动时自动生成随机密钥，重启后旧会话失效）
+  jwt_secret: ""
+  # 会话 JWT 有效期（分钟）
+  jwt_expire_minutes: 1200
+  providers:
+    # GitHub（OAuth2 适配；client_id/client_secret 在 GitHub OAuth Apps 创建）
+    - name: github
+      type: oauth2
+      display_name: GitHub
+      client_id: ""
+      client_secret: ""
+      # 可选：GitHub OAuth scope，默认最小权限 ["read:user"]
+      # scope:
+      #   - read:user
+      # 可选：自定义回调地址，默认 <public_url>/api/v1/auth/github/callback
+      # redirect_url: "https://rag.example.com/api/v1/auth/github/callback"
+    # 自定义 OIDC Provider（任意符合规范的 issuer）
+    # - name: company
+    #   type: oidc
+    #   display_name: 公司 SSO
+    #   client_id: ""
+    #   client_secret: ""
+    #   issuer: "https://sso.company.com"
+    #   # 可选 scope，默认 ["openid","profile","email"]
+    #   scope:
+    #     - openid
+    #     - profile
+    #     - email
 

@@ -49,7 +49,9 @@ function onDrop(e: DragEvent) {
     @dragleave.prevent="dragging = false"
     @drop.prevent="onDrop"
   >
-    <el-icon class="upload-icon" :size="36"><UploadFilled /></el-icon>
+    <div class="upload-badge">
+      <el-icon :size="30"><UploadFilled /></el-icon>
+    </div>
     <p class="upload-text">拖拽文件到此处，或</p>
     <el-upload
       :show-file-list="false"
@@ -71,24 +73,42 @@ function onDrop(e: DragEvent) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 28px 16px;
-  border: 2px dashed var(--br-border);
-  border-radius: 8px;
+  padding: 34px 16px;
+  border: 1.5px dashed var(--br-border-strong);
+  border-radius: var(--br-radius-lg);
   background: var(--br-bg-card);
-  transition: border-color 0.2s, background 0.2s;
+  box-shadow: var(--br-shadow-sm);
+  transition:
+    border-color var(--br-transition-base),
+    background-color var(--br-transition-base),
+    box-shadow var(--br-transition-base);
 }
 
 .upload-panel.dragging {
   border-color: var(--br-primary);
-  background: var(--br-hover);
+  background: var(--br-primary-soft);
+  box-shadow: 0 0 0 4px var(--br-primary-soft);
 }
 
-.upload-icon {
-  color: var(--br-text-secondary);
+.upload-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 18px;
+  background: var(--br-primary-soft);
+  color: var(--br-primary);
+  margin-bottom: 4px;
+  transition: transform var(--br-transition-base);
+}
+
+.upload-panel.dragging .upload-badge {
+  transform: scale(1.06);
 }
 
 .upload-text {
-  margin: 8px 0;
+  margin: 12px 0;
   color: var(--br-text);
   font-size: 14px;
 }

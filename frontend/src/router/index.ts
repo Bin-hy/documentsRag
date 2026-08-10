@@ -1,6 +1,6 @@
-// 路由表与登录守卫
+// 路由表与登录守卫（会话 JWT 或 API Key 任一存在即已登录）
 import { createRouter, createWebHistory } from 'vue-router'
-import { getStoredApiKey } from '../api/client'
+import { getStoredApiKey, getStoredToken } from '../api/client'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -28,10 +28,11 @@ const router = createRouter({
 
 // 登录守卫：未登录只能访问 /login
 router.beforeEach((to) => {
-  if (!to.meta.public && !getStoredApiKey()) {
+  const authenticated = getStoredToken().length > 0 || getStoredApiKey().length > 0
+  if (!to.meta.public && !authenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  if (to.path === '/login' && getStoredApiKey()) {
+  if (to.path === '/login' && authenticated) {
     return { path: '/chat' }
   }
   return true

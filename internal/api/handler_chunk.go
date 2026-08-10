@@ -48,6 +48,22 @@ func (h *handler) GetChunk(c *gin.Context) {
 		return
 	}
 
+	// 访问权校验：chunk 必须能关联到所属文档且文档可访问，否则一律 404
+	// （文档不存在/残留向量/越权均不返回原文，防跨租户读取）
+	if documentID == "" {
+		Fail(c, CodeNotFound, "chunk 不存在")
+		return
+	}
+	doc, err := h.store.GetDocument(c.Request.Context(), documentID)
+	if err != nil {
+		Fail(c, CodeNotFound, "chunk 不存在")
+		return
+	}
+	if !h.ensureKBAccess(c, doc.KBID) {
+		Fail(c, CodeNotFound, "chunk 不存在")
+		return
+	}
+
 	OK(c, gin.H{
 		"chunk_id":    id,
 		"content":     content,

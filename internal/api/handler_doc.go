@@ -52,12 +52,9 @@ func (h *handler) UploadDocument(c *gin.Context) {
 		Fail(c, CodeBadRequest, "无效的 kb_id")
 		return
 	}
-	if _, err := h.store.GetKB(ctx, kbID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			Fail(c, CodeNotFound, "知识库不存在")
-			return
-		}
-		Fail(c, CodeInternal, "查询知识库失败")
+	// 访问权校验：知识库不存在或越权一律 404
+	if !h.ensureKBAccess(c, kbID) {
+		Fail(c, CodeNotFound, "知识库不存在")
 		return
 	}
 
@@ -156,6 +153,11 @@ func (h *handler) ListDocuments(c *gin.Context) {
 		Fail(c, CodeBadRequest, "缺少 kb_id")
 		return
 	}
+	// 访问权校验：越权一律 404
+	if !h.ensureKBAccess(c, kbID) {
+		Fail(c, CodeNotFound, "知识库不存在")
+		return
+	}
 	docs, err := h.store.ListDocuments(c.Request.Context(), kbID)
 	if err != nil {
 		Fail(c, CodeInternal, "查询文档失败")
@@ -188,6 +190,11 @@ func (h *handler) DeleteDocument(c *gin.Context) {
 			return
 		}
 		Fail(c, CodeInternal, "查询文档失败")
+		return
+	}
+	// 经文档所属知识库校验访问权（越权一律 404）
+	if !h.ensureKBAccess(c, doc.KBID) {
+		Fail(c, CodeNotFound, "文档不存在")
 		return
 	}
 

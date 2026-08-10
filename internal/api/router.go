@@ -10,6 +10,7 @@ package api
 
 import (
 	_ "github.com/Bin-hy/bin-rag/internal/api/docs"
+	"github.com/Bin-hy/bin-rag/internal/auth"
 	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/loader"
 	"github.com/Bin-hy/bin-rag/internal/rag"
@@ -32,6 +33,7 @@ type Dependencies struct {
 	Rebuild   func(*config.Config) error // 配置更新时的运行时组件重建回调（app 装配传入）
 	Engine    EngineProvider             // 当前引擎（可热重载）
 	Store     store.Store
+	Auth      *auth.Manager // 认证管理器（多 Provider 登录 + 会话 JWT）
 	VS        vectorstore.VectorStore
 	BM25      retriever.BM25Index
 	Registry  loader.Registry
@@ -46,6 +48,7 @@ type handler struct {
 	rebuild   func(*config.Config) error
 	engine    EngineProvider
 	store     store.Store
+	authMgr   *auth.Manager
 	vs        vectorstore.VectorStore
 	bm25      retriever.BM25Index
 	registry  loader.Registry
@@ -65,17 +68,30 @@ func NewRouter(deps Dependencies) *gin.Engine {
 		rebuild:   deps.Rebuild,
 		engine:    deps.Engine,
 		store:     deps.Store,
+		authMgr:   deps.Auth,
 		vs:        deps.VS,
 		bm25:      deps.BM25,
 		registry:  deps.Registry,
 		history:   deps.History,
 	}
 
-	// Swagger 文档（公开访问，接口实测仍需 API Key）
+	// Swagger 文档（公开访问，接口实测仍需 API Key / 会话）
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
+	// 认证公开组（不挂 Auth 中间件）：登录 Provider 列表 / 授权跳转 / 回调 / ticket 换 JWT
+	pub := r.Group("/api/v1/auth")
+	pub.GET("/providers", h.Providers)
+	pub.GET("/oidc/:provider/login", h.OIDCLogin)
+	pub.GET("/oidc/:provider/callback", h.OIDCCallback)
+	pub.GET("/github/login", h.GithubLogin)
+	pub.GET("/github/callback", h.GithubCallback)
+	pub.POST("/exchange", h.ExchangeTicket)
+
 	v1 := r.Group("/api/v1")
-	v1.Use(Auth(deps.Store, deps.Config.AuthEnabled, deps.Config.BootstrapAPIKey))
+	v1.Use(Auth(deps.Store, deps.Auth, deps.Config.AuthEnabled, deps.Config.BootstrapAPIKey))
+
+	// 认证（需认证：apikey / 会话 JWT）
+	v1.GET("/auth/me", h.Me)
 
 	// 配置管理（GET 任意 Key；PUT 需 bootstrap Key）
 	v1.GET("/config", h.GetConfig)
@@ -108,6 +124,7 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	v1.GET("/api-keys", h.ListAPIKeys)
 	v1.DELETE("/api-keys/:id", h.DeleteAPIKey)
 	v1.POST("/api-keys/:id/toggle", h.ToggleAPIKey)
+	v1.PUT("/api-keys/:id/permissions", h.UpdateAPIKeyPermissions)
 
 	return r
 }

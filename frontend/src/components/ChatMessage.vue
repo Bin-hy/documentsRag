@@ -14,8 +14,8 @@ defineProps<{ message: LocalMessage; streaming: boolean }>()
     <div class="msg-body">
       <div class="msg-bubble" :class="{ error: message.error }">
         <template v-if="message.role === 'assistant'">
-          <!-- 思考链路面板：流式中逐步累积，位于回答内容上方 -->
-          <ThinkingPanel v-if="message.thinking && message.thinking.length" :steps="message.thinking" />
+          <!-- 思考链路面板：流式中逐步累积（active 表示最后一步为当前环节） -->
+          <ThinkingPanel v-if="message.thinking && message.thinking.length" :steps="message.thinking" :active="streaming" />
           <MarkdownRenderer v-if="message.content" :content="message.content" />
           <span v-else-if="streaming" class="typing-cursor">▍</span>
           <span v-else class="br-muted">（无回答）</span>
@@ -33,61 +33,90 @@ defineProps<{ message: LocalMessage; streaming: boolean }>()
 .msg {
   display: flex;
   gap: 12px;
-  margin-bottom: 20px;
+  margin-bottom: 22px;
+  animation: msg-in 260ms var(--br-ease) both;
+}
+
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .msg.user {
   flex-direction: row-reverse;
 }
 
+/* 头像：圆角方块（替代通用圆形） */
 .msg-avatar {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
-  border-radius: 50%;
-  font-size: 13px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
   flex-shrink: 0;
 }
 
 .msg.user .msg-avatar {
-  background: var(--br-primary);
+  background: linear-gradient(135deg, #5f6be0, #404ab0);
   color: #fff;
+  box-shadow: 0 4px 10px rgba(79, 91, 213, 0.3);
 }
 
 .msg.assistant .msg-avatar {
-  background: var(--br-hover);
+  background: var(--br-bg-inset);
   border: 1px solid var(--br-border);
+  color: var(--br-primary);
 }
 
 .msg-body {
-  max-width: 78%;
+  max-width: 82%;
   min-width: 0;
 }
 
+/* 用户消息收敛、助手回答突出（回答是视觉主体） */
+.msg.user .msg-body {
+  max-width: 64%;
+}
+
 .msg-bubble {
-  padding: 12px 14px;
-  border-radius: 12px;
+  padding: 13px 15px;
+  border-radius: var(--br-radius-lg);
   background: var(--br-bg-card);
   border: 1px solid var(--br-border);
-  box-shadow: var(--br-shadow);
+  box-shadow: var(--br-shadow-sm);
 }
 
 .msg.user .msg-bubble {
-  background: var(--br-primary);
-  border-color: var(--br-primary);
+  background: linear-gradient(135deg, #5561d6, #4650bd);
+  border-color: transparent;
   color: #fff;
+  box-shadow: 0 6px 16px rgba(79, 91, 213, 0.26);
+  border-bottom-right-radius: 6px;
+}
+
+.msg.assistant .msg-bubble {
+  border-top-left-radius: 6px;
+  box-shadow: var(--br-shadow-md);
 }
 
 .msg-bubble.error {
-  border-color: #f56c6c;
-  background: rgba(245, 108, 108, 0.08);
+  border-color: rgba(245, 108, 108, 0.5);
+  background: color-mix(in srgb, #f56c6c 7%, var(--br-bg-card));
 }
 
 .user-text {
   white-space: pre-wrap;
   word-break: break-word;
+  line-height: 1.65;
 }
 
 .typing-cursor {

@@ -1,4 +1,113 @@
 definitions:
+  api.ConfigUpdateRequest:
+    properties:
+      embedder:
+        $ref: '#/definitions/api.EmbedderPatch'
+      llm:
+        $ref: '#/definitions/api.LLMPatch'
+      loader:
+        $ref: '#/definitions/api.LoaderPatch'
+      rag_strategy:
+        $ref: '#/definitions/config.StrategyConfig'
+      reranker:
+        $ref: '#/definitions/api.RerankerPatch'
+      retriever:
+        $ref: '#/definitions/api.RetrieverPatch'
+    type: object
+  api.ConfigView:
+    properties:
+      is_bootstrap:
+        description: 当前 Key 是否为 bootstrap（前端据此允许编辑）
+        type: boolean
+      mutable:
+        $ref: '#/definitions/api.MutableConfigView'
+      read_only:
+        items:
+          $ref: '#/definitions/api.ReadOnlyConfig'
+        type: array
+    type: object
+  api.EmbedderPatch:
+    properties:
+      model:
+        type: string
+    type: object
+  api.EmbedderView:
+    properties:
+      dimension:
+        type: integer
+      model:
+        type: string
+    type: object
+  api.LLMPatch:
+    properties:
+      max_tokens:
+        type: integer
+      model:
+        type: string
+      temperature:
+        type: number
+      timeout:
+        type: integer
+    type: object
+  api.LLMView:
+    properties:
+      max_tokens:
+        type: integer
+      model:
+        type: string
+      temperature:
+        type: number
+      timeout:
+        type: integer
+    type: object
+  api.LoaderPatch:
+    properties:
+      min_readable_chars:
+        type: integer
+    type: object
+  api.LoaderView:
+    properties:
+      min_readable_chars:
+        type: integer
+    type: object
+  api.MutableConfigView:
+    properties:
+      embedder:
+        $ref: '#/definitions/api.EmbedderView'
+      llm:
+        $ref: '#/definitions/api.LLMView'
+      loader:
+        $ref: '#/definitions/api.LoaderView'
+      rag_strategy:
+        $ref: '#/definitions/config.StrategyConfig'
+      reranker:
+        $ref: '#/definitions/api.RerankerView'
+      retriever:
+        $ref: '#/definitions/api.RetrieverView'
+    type: object
+  api.ReadOnlyConfig:
+    properties:
+      key:
+        type: string
+      needs_restart:
+        type: boolean
+      value:
+        type: string
+    type: object
+  api.RerankerPatch:
+    properties:
+      model:
+        type: string
+      top_n:
+        type: integer
+    type: object
+  api.RerankerView:
+    properties:
+      model:
+        type: string
+      top_n:
+        type: integer
+    type: object
   api.Response:
     properties:
       code:
@@ -7,8 +116,29 @@ definitions:
       message:
         type: string
     type: object
+  api.RetrieverPatch:
+    properties:
+      bm25_weight:
+        type: number
+      top_k:
+        type: integer
+      vector_weight:
+        type: number
+    type: object
+  api.RetrieverView:
+    properties:
+      bm25_weight:
+        type: number
+      top_k:
+        type: integer
+      vector_weight:
+        type: number
+    type: object
   api.chatRequest:
     properties:
+      enhanced:
+        description: 增强模式（function calling 工具，如 web_search）
+        type: boolean
       kb_id:
         description: 知识库范围，空表示不限定
         type: string
@@ -16,6 +146,10 @@ definitions:
         type: string
       session_id:
         type: string
+      strategy:
+        allOf:
+        - $ref: '#/definitions/config.StrategyConfig'
+        description: 单次请求策略覆盖
     required:
     - question
     - session_id
@@ -33,8 +167,34 @@ definitions:
         type: string
       name:
         type: string
+      strategy:
+        allOf:
+        - $ref: '#/definitions/config.StrategyConfig'
+        description: 知识库级策略
     required:
     - name
+    type: object
+  api.exchangeRequest:
+    properties:
+      ticket:
+        type: string
+    required:
+    - ticket
+    type: object
+  api.kbView:
+    properties:
+      createdAt:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      strategy:
+        type: string
+      updatedAt:
+        type: string
     type: object
   api.keyView:
     properties:
@@ -61,14 +221,74 @@ definitions:
         type: string
       name:
         type: string
+      strategy:
+        allOf:
+        - $ref: '#/definitions/config.StrategyConfig'
+        description: 知识库级策略（nil = 不修改）
     required:
     - name
+    type: object
+  auth.ProviderView:
+    properties:
+      display_name:
+        type: string
+      name:
+        type: string
+      type:
+        description: oidc / oauth2
+        type: string
+    type: object
+  config.StrategyConfig:
+    properties:
+      data_sources:
+        description: DataSources 允许的数据源列表；空=未设置（合并后默认仅 vector_store）
+        items:
+          type: string
+        type: array
+      decomposition:
+        type: string
+      fusion:
+        type: string
+      hyde:
+        type: string
+      query:
+        type: string
+      routing:
+        type: string
+      step_back:
+        type: string
+      thinking:
+        description: off / on，空=继承
+        type: string
     type: object
   llm.Message:
     properties:
       content:
         type: string
       role:
+        type: string
+      sources:
+        description: 引用来源 JSON 数组字符串（历史持久化用，空 = 无引用）
+        type: string
+      tool_call_id:
+        description: tool 结果消息回引的工具调用 ID
+        type: string
+      tool_calls:
+        description: assistant 消息的工具调用列表
+        items:
+          $ref: '#/definitions/llm.ToolCall'
+        type: array
+    type: object
+  llm.ToolCall:
+    properties:
+      arguments:
+        description: 参数 JSON 字符串
+        type: string
+      id:
+        description: 工具调用 ID（tool 结果消息回引用）
+        type: string
+      name:
+        description: 工具名
         type: string
     type: object
   rag.RAGResult:
@@ -78,6 +298,11 @@ definitions:
       sources:
         items:
           $ref: '#/definitions/rag.Source'
+        type: array
+      thinking:
+        description: 思考链路（F8，关闭时省略）
+        items:
+          $ref: '#/definitions/rag.ThinkingStep'
         type: array
     type: object
   rag.Source:
@@ -94,7 +319,58 @@ definitions:
       score:
         description: 检索分数
         type: number
+      source_type:
+        description: 来源类型（vector_store / web_search 等）
+        type: string
     type: object
+  rag.ThinkingStep:
+    properties:
+      data:
+        description: 环节结构化数据
+      elapsed_ms:
+        description: 环节耗时
+        type: integer
+      label:
+        description: 前端展示标题
+        type: string
+      type:
+        $ref: '#/definitions/rag.ThinkingStepType'
+    type: object
+  rag.ThinkingStepType:
+    enum:
+    - routing
+    - query_rewrite
+    - multi_query
+    - retrieval
+    - rerank
+    - chunks
+    - decompose
+    - step_back
+    - hyde
+    - tool
+    type: string
+    x-enum-comments:
+      StepChunks: 最终目标 chunks
+      StepDecompose: 分解判定 + 子问题列表
+      StepHyDE: 假设文档
+      StepMultiQuery: 多查询变体生成
+      StepRerank: 重排序前后对比
+      StepRetrieval: 检索（单路或多路）
+      StepRewrite: 单查询改写
+      StepRouting: 路由判定
+      StepStepBack: 回退问题
+      StepTool: 工具调用（增强模式 function calling）
+    x-enum-varnames:
+    - StepRouting
+    - StepRewrite
+    - StepMultiQuery
+    - StepRetrieval
+    - StepRerank
+    - StepChunks
+    - StepDecompose
+    - StepStepBack
+    - StepHyDE
+    - StepTool
   store.Document:
     properties:
       chunkIDs:
@@ -114,25 +390,11 @@ definitions:
       kbid:
         type: string
       size:
-        format: int64
         type: integer
       status:
         description: pending / processing / completed / failed
         type: string
       taskID:
-        type: string
-    type: object
-  store.KnowledgeBase:
-    properties:
-      createdAt:
-        type: string
-      description:
-        type: string
-      id:
-        type: string
-      name:
-        type: string
-      updatedAt:
         type: string
     type: object
   store.Task:
@@ -195,7 +457,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建 API Key，明文仅返回一次（后续不可再查），库中只存 SHA-256 hash
+      description: 创建 API Key，明文仅返回一次（后续不可再查），库中只存 SHA-256 hash；仅系统级 API Key 可操作
       parameters:
       - description: Key 名称
         in: body
@@ -228,6 +490,10 @@ paths:
             $ref: '#/definitions/api.Response'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
           schema:
             $ref: '#/definitions/api.Response'
         "500":
@@ -327,13 +593,146 @@ paths:
       summary: 启停 API Key
       tags:
       - API Key
+  /api/v1/auth/exchange:
+    post:
+      consumes:
+      - application/json
+      description: 用回调后拿到的一次性 ticket 换取会话 JWT；ticket 仅可成功消费一次
+      parameters:
+      - description: 一次性 ticket
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.exchangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    token:
+                      type: string
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+      summary: 换取会话 JWT
+      tags:
+      - 认证
+  /api/v1/auth/github/callback:
+    get:
+      description: GitHub OAuth2 回调；成功后 302 到 /login?ticket=xxx。校验失败不创建会话
+      responses:
+        "302":
+          description: Found
+      summary: GitHub 回调
+      tags:
+      - 认证
+  /api/v1/auth/github/login:
+    get:
+      description: GitHub 使用 OAuth2 适配（非 OIDC），302 到 GitHub 授权页
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Found
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+      summary: 发起 GitHub 登录
+      tags:
+      - 认证
+  /api/v1/auth/me:
+    get:
+      description: 返回当前凭据身份：apikey → {kind,is_bootstrap}；oidc → {kind,user_id,provider,name}
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 当前身份
+      tags:
+      - 认证
+  /api/v1/auth/oidc/{provider}/callback:
+    get:
+      description: OIDC 授权码回调；成功后 302 到 /login?ticket=xxx（一次性，前端换取 JWT）。校验失败不创建会话
+      parameters:
+      - description: OIDC provider 名
+        in: path
+        name: provider
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+      summary: OIDC 回调
+      tags:
+      - 认证
+  /api/v1/auth/oidc/{provider}/login:
+    get:
+      description: 按 provider 名发起 OIDC 授权码登录，302 重定向到对应 issuer 授权页
+      parameters:
+      - description: OIDC provider 名（见 /auth/providers）
+        in: path
+        name: provider
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "302":
+          description: Found
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+      summary: 发起 OIDC 登录
+      tags:
+      - 认证
+  /api/v1/auth/providers:
+    get:
+      description: 返回已启用的三方登录 Provider（name/type/display_name），不含 client_secret 等机密；未配置时为空数组
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/auth.ProviderView'
+                  type: array
+              type: object
+      summary: 登录 Provider 列表
+      tags:
+      - 认证
   /api/v1/chat:
     post:
       consumes:
       - application/json
       description: '接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream
-        或 query stream=1 时返回 SSE 流式（事件序列：sources 引用来源 → chunk×N 文本增量 → done 正常结束 /
-        error 出错终止）'
+        或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N
+        文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）'
       parameters:
       - description: 问答请求
         in: body
@@ -369,6 +768,25 @@ paths:
       security:
       - ApiKeyAuth: []
       summary: 问答
+      tags:
+      - 问答
+  /api/v1/chat/enhancements:
+    get:
+      description: 返回可用增强能力。当前能力：web_search（联网搜索）；available 表示后端是否已配置就绪（配置了 web_search.api_key）
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  additionalProperties: true
+                  type: object
+              type: object
+      security:
+      - ApiKeyAuth: []
+      summary: 增强能力列表
       tags:
       - 问答
   /api/v1/chat/history:
@@ -411,6 +829,119 @@ paths:
       summary: 对话历史
       tags:
       - 问答
+  /api/v1/chunks/{id}:
+    get:
+      description: 按 chunk_id 从向量库取回该 chunk 的原文内容与来源文档信息，供引用来源点击查看
+      parameters:
+      - description: chunk ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  properties:
+                    chunk_id:
+                      type: string
+                    content:
+                      type: string
+                    document_id:
+                      type: string
+                    filename:
+                      type: string
+                  type: object
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: Chunk 原文
+      tags:
+      - 问答
+  /api/v1/config:
+    get:
+      description: 读取当前配置：可修改组（LLM/Embedding/Retriever/Reranker/Strategy/Loader）+
+        只读组（Postgres/VectorStore/Server，需重启生效）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ConfigView'
+              type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 配置视图
+      tags:
+      - 配置
+    put:
+      consumes:
+      - application/json
+      description: 更新可修改配置（LLM/Embedding/Retriever/Reranker/Strategy/Loader）。需 bootstrap
+        Key；写入文件并热重载，仅影响新请求。
+      parameters:
+      - description: 可修改配置字段
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.ConfigUpdateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ConfigView'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 更新配置
+      tags:
+      - 配置
   /api/v1/documents:
     get:
       description: 按知识库查询文档列表，含文件名、大小、格式、入库状态、创建时间
@@ -548,7 +1079,7 @@ paths:
       - 文档
   /api/v1/knowledge-bases:
     get:
-      description: 列出全部知识库，按创建时间倒序
+      description: 按当前身份返回知识库：登录用户仅返回自己创建的；系统级 API Key 返回全部。按创建时间倒序
       produces:
       - application/json
       responses:
@@ -560,7 +1091,7 @@ paths:
             - properties:
                 data:
                   items:
-                    $ref: '#/definitions/store.KnowledgeBase'
+                    $ref: '#/definitions/api.kbView'
                   type: array
               type: object
         "401":
@@ -579,7 +1110,7 @@ paths:
     post:
       consumes:
       - application/json
-      description: 创建一个新的知识库，返回知识库完整信息
+      description: 创建一个新的知识库，返回知识库完整信息；登录用户创建的知识库仅本人与系统级 API Key 可见
       parameters:
       - description: 知识库信息
         in: body
@@ -597,7 +1128,7 @@ paths:
             - $ref: '#/definitions/api.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/store.KnowledgeBase'
+                  $ref: '#/definitions/api.kbView'
               type: object
         "400":
           description: Bad Request
@@ -618,7 +1149,7 @@ paths:
       - 知识库
   /api/v1/knowledge-bases/{id}:
     delete:
-      description: 删除知识库及其全部文档、向量与索引数据
+      description: 删除知识库及其全部文档、向量与索引数据；无权访问返回 404
       parameters:
       - description: 知识库 ID
         in: path
@@ -658,7 +1189,7 @@ paths:
       tags:
       - 知识库
     get:
-      description: 按 ID 查询单个知识库
+      description: 按 ID 查询单个知识库；无权访问返回 404
       parameters:
       - description: 知识库 ID
         in: path
@@ -675,7 +1206,7 @@ paths:
             - $ref: '#/definitions/api.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/store.KnowledgeBase'
+                  $ref: '#/definitions/api.kbView'
               type: object
         "401":
           description: Unauthorized
@@ -697,7 +1228,7 @@ paths:
     put:
       consumes:
       - application/json
-      description: 更新知识库的名称与描述
+      description: 更新知识库的名称与描述；无权访问返回 404
       parameters:
       - description: 知识库 ID
         in: path
@@ -720,7 +1251,7 @@ paths:
             - $ref: '#/definitions/api.Response'
             - properties:
                 data:
-                  $ref: '#/definitions/store.KnowledgeBase'
+                  $ref: '#/definitions/api.kbView'
               type: object
         "400":
           description: Bad Request

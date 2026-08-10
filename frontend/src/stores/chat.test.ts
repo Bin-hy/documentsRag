@@ -124,6 +124,31 @@ describe('chatStore 降级状态机', () => {
     expect(store.streaming).toBe(false)
   })
 
+  it('thinking 事件：逐步累积到消息 thinking 数组（思维链数据链路）', async () => {
+    const store = useChatStore()
+    store.newSession()
+    mockStream([
+      {
+        type: 'thinking',
+        step: { type: 'routing', label: '', elapsed_ms: 5, data: { complexity: 'simple', strategy: 'rag' } },
+      },
+      {
+        type: 'thinking',
+        step: { type: 'retrieval', label: '', elapsed_ms: 60, data: { query: 'q', recalled: 2, method: 'hybrid' } },
+      },
+      { type: 'chunk', content: '回答' },
+      { type: 'done' },
+    ])
+
+    await store.send('问题')
+
+    const last = store.messages[store.messages.length - 1]
+    expect(last.thinking).toHaveLength(2)
+    expect(last.thinking?.[0].type).toBe('routing')
+    expect(last.thinking?.[1].type).toBe('retrieval')
+    expect(last.content).toBe('回答')
+  })
+
   it('停止按钮状态：发送期间 streaming=true，结束后 false', async () => {
     const store = useChatStore()
     store.newSession()
@@ -175,5 +200,27 @@ describe('chatStore 增强模式', () => {
 
     const req = spy.mock.calls[0][0] as import('../api/types').ChatRequest
     expect(req.enhanced).toBe(false)
+  })
+
+  it('send 携带 kb_id：无会话时用传入 kb 创建会话并请求（后端必填）', async () => {
+    const store = useChatStore()
+    const spy = mockStream([{ type: 'done' }])
+
+    await store.send('问题', 'kb-1')
+
+    const req = spy.mock.calls[0][0] as import('../api/types').ChatRequest
+    expect(req.kb_id).toBe('kb-1')
+    expect(store.activeSession?.kbId).toBe('kb-1')
+  })
+
+  it('send 优先使用会话绑定的知识库', async () => {
+    const store = useChatStore()
+    store.newSession('kb-session')
+    const spy = mockStream([{ type: 'done' }])
+
+    await store.send('问题', 'kb-other')
+
+    const req = spy.mock.calls[0][0] as import('../api/types').ChatRequest
+    expect(req.kb_id).toBe('kb-session')
   })
 })
