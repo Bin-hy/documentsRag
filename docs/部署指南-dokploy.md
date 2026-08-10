@@ -1,5 +1,8 @@
 # BinRag 服务器部署指南（dokploy · Dockerfile 模式 · 单服务不分离）
 
+> ⚠️ **本文档已由 `docs/dokploy-deploy.md` 取代**（镜像规范升级：`Dockerfile.deploy`
+> 不再内置配置文件，配置与数据全部外部挂载）。请以新文档为准；本节内容仅作背景参考。
+
 > 目标：把 BinRag 以**单一服务**部署到自有服务器（dokploy 的 Dockerfile 模式），
 > 前端与后端打包进同一个镜像（`go:embed` 单二进制），对外域名接入 Cloudflare
 > 获得 CDN / HTTPS / 防护。

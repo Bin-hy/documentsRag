@@ -4,15 +4,22 @@
 # 多阶段构建：
 #   阶段 1 frontend : Node 22 构建 Vue 3 前端（产物输出 internal/webui/dist）
 #   阶段 2 backend  : Go 1.26 编译单二进制（CGO_ENABLED=0，go:embed 嵌入前端）
-#   阶段 3 runtime  : Alpine 精简运行时（二进制 + 示例配置 + CA 证书）
+#   阶段 3 runtime  : Alpine 精简运行时（仅二进制 + CA 证书 + 时区 + 空目录）
+#
+# 镜像不包含任何配置/数据：
+#   - 配置文件由外部挂载到 /app/configs/config.yaml（缺失则启动即失败，fail-fast）
+#   - 上传数据由外部挂载到 /app/data（file_storage_dir=./data/uploads）
 #
 # 产物：单一可执行文件，同源托管 API 与前端静态资源（无跨域，SSE 流式顺畅）。
 # 架构：单服务不分离；Cloudflare 通过 DNS 代理 / Tunnel 提供 CDN 与 HTTPS。
 #
 # 构建：
 #   docker build -f Dockerfile.deploy -t binrag-server:latest .
-# 运行（需先有 PostgreSQL 与 Qdrant，配置见 docs/部署指南-dokploy.md）：
-#   docker run -d -p 8085:8085 -v binrag-data:/app/data binrag-server:latest
+# 运行（需先有 PostgreSQL 与 Qdrant；配置/数据必须挂载，见 docs/dokploy-deploy.md）：
+#   docker run -d -p 8085:8085 \
+#     -v /opt/dokploy/binrag/config.yaml:/app/configs/config.yaml:ro \
+#     -v /opt/dokploy/binrag/data:/app/data \
+#     binrag-server:latest
 # ============================================================================
 
 # ---------- 阶段 1：构建前端 ----------
@@ -58,12 +65,13 @@ RUN apk add --no-cache ca-certificates tzdata \
 
 WORKDIR /app
 
-# 二进制 + 示例配置（生产覆盖通过挂载 config.local.yaml 自动合并，见部署文档）
+# 仅拷贝二进制。生产配置/数据全部来自外部挂载，镜像不内置任何配置文件：
+#   - /app/configs/config.yaml   配置文件（Dokploy Volume 或 File Mount）
+#   - /app/data                  上传文件持久化（file_storage_dir=./data/uploads）
+# 未挂载配置时服务启动即失败（fail-fast），避免误用默认值运行
 COPY --from=backend /out/binrag-server ./binrag-server
-COPY configs/config.yaml ./configs/config.yaml
 
-# 上传文件存储目录（生产环境务必把持久化卷挂载到 /app/data）
-RUN mkdir -p /app/data/uploads && chown -R binrag:binrag /app
+RUN mkdir -p /app/configs /app/data/uploads && chown -R binrag:binrag /app
 
 USER binrag
 

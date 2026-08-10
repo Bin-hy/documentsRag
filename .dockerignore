@@ -11,9 +11,9 @@
 .codegraph
 .reasonix
 
-# 本地私有配置（configs/*.local.* 会被 config 自动合并，严禁进镜像；
-# 例外：deploy/configs/*.local.yaml.example 模板仍可留在构建上下文，无害）
-configs/*.local.*
+# 配置目录整体排除：镜像不再内置配置（runtime 阶段已无 COPY configs；
+# backend 的 COPY . . 也不需要 configs——彻底避免生产配置进入镜像/构建缓存）
+configs
 .env
 .env.*
 
