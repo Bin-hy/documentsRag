@@ -415,4 +415,4 @@ docs/                    各阶段的 spec / plan / task / checklist 设计文�
 
 ## 📄 License
 
-本项目目前未指定开源协议，商用与二次分发请先与作者联系。
+本项目使用 [MIT License](LICENSE) 开源。Copyright (c) 2026 Bin-hy。
