@@ -48,7 +48,8 @@ GitHub push ──► Dokploy（webhook 触发）──► docker build（Docker
 `Dockerfile.deploy` 三阶段：
 
 ```
-frontend（node:22-alpine）  → npm ci + npm run build，产物 internal/webui/dist
+frontend（node:22，glibc）→ pnpm install + pnpm build（与 CI 一致；alpine/musl 下
+                                  vite 8 的 rolldown/napi-rs 原生绑定会加载失败），产物 internal/webui/dist
 backend （golang:1.26-alpine）→ CGO_ENABLED=0 编译单二进制，go:embed 嵌入前端
 runtime（alpine:3.20）      → 仅二进制 + CA 证书 + 时区 + 空目录（无任何配置）
 ```

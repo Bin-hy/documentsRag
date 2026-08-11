@@ -22,7 +22,11 @@
 # ============================================================================
 
 # ---------- 阶段 1：构建前端 ----------
-FROM node:22-alpine AS frontend
+# 注意：使用 glibc 版 node:22（而非 node:22-alpine）——vite 8 依赖 Rust 原生
+# rolldown 与 napi-rs 原生绑定（如 @napi-rs/lzma 仅有 -gnu 变体），在 alpine(musl)
+# 下加载失败导致 pnpm build 退出 1；glibc 环境与 .github/workflows/ci.yml 一致
+# （该命令在 CI 已验证通过）。运行时阶段仍为精简 alpine（仅含静态 Go 二进制）。
+FROM node:22 AS frontend
 
 WORKDIR /app
 
