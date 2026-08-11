@@ -67,7 +67,9 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          platforms: linux/amd64,linux/arm64
+          # 临时单平台（amd64）：排查 arm64 在 QEMU 模拟下 rolldown/napi 原生绑定
+          # 构建失败的问题；确认后再恢复 linux/amd64,linux/arm64 并拆分原生 arm64 runner
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

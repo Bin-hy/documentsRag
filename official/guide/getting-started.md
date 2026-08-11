@@ -67,7 +67,7 @@ docker compose ps                            # 三个服务应均为 running（p
 curl -I http://localhost:8085/swagger/index.html   # 返回 200 即服务就绪
 ```
 
-浏览器打开 <http://localhost:8085> ，输入 `bootstrap_api_key` 登录使用（完整 API 文档见 `/swagger/`）。
+浏览器打开 `http://localhost:8085` ，输入 `bootstrap_api_key` 登录使用（完整 API 文档见 `/swagger/`）。
 
 ### 4. 免编译部署（可选）
 
