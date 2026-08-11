@@ -1,0 +1,64 @@
+/* ===== BinRag 官网品牌主题 =====
+ * 品牌色沿用前端 --br-primary 靛蓝系：#4f5bd5（明）/ #7d85ee（暗）
+ */
+
+:root {
+  --vp-c-brand-1: #4f5bd5;
+  --vp-c-brand-2: #5f6adc;
+  --vp-c-brand-3: #3d47c0;
+  --vp-c-brand-soft: rgba(79, 91, 213, 0.14);
+
+  --vp-c-brand-1-rgb: 79, 91, 213;
+
+  --vp-font-family-base:
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans SC', system-ui,
+    -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+.dark {
+  --vp-c-brand-1: #7d85ee;
+  --vp-c-brand-2: #8f96f1;
+  --vp-c-brand-3: #6a72e0;
+  --vp-c-brand-soft: rgba(125, 133, 238, 0.18);
+
+  --vp-c-brand-1-rgb: 125, 133, 238;
+}
+
+/* ===== Hero 增强 ===== */
+
+.VPHero .name {
+  background: linear-gradient(120deg, #4f5bd5 0%, #7c5cd6 45%, #a855f7 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.dark .VPHero .name {
+  background: linear-gradient(120deg, #7d85ee 0%, #a48cee 45%, #c084fc 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.VPHero .tagline {
+  line-height: 1.7;
+}
+
+.VPHero .actions .VPButton.brand {
+  box-shadow: 0 4px 16px rgba(79, 91, 213, 0.35);
+}
+
+/* ===== 通用工具 ===== */
+
+.vp-doc h2 {
+  scroll-margin-top: 80px;
+}
+
+/* 品牌渐变分隔线 */
+.brand-hr {
+  height: 4px;
+  width: 56px;
+  margin: 4px 0 20px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #4f5bd5, #a855f7);
+}

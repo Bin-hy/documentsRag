@@ -44,15 +44,15 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: 构建前端（产物进 internal/webui/dist，被 go:embed 打包）
-        working-directory: frontend
-        run: npm ci && npm run build
+        run: pnpm install --frozen-lockfile && pnpm --filter binrag-frontend build
 
       - name: 交叉编译 Web 版
         env:
@@ -107,15 +107,15 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: 构建前端
-        working-directory: frontend
-        run: npm ci && npm run build
+        run: pnpm install --frozen-lockfile && pnpm --filter binrag-frontend build
 
       - name: 编译桌面二进制
         run: go build -trimpath -ldflags="-w -s" -o bin/BinRag ./cmd/desktop
@@ -156,18 +156,18 @@ jobs:
           go-version: '1.26'
           cache: true
 
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: 安装 MinGW（Wails/webview 的 CGO 依赖）
         run: choco install mingw -y --no-progress
 
       - name: 构建前端
-        working-directory: frontend
-        run: npm ci && npm run build
+        run: pnpm install --frozen-lockfile && pnpm --filter binrag-frontend build
 
       - name: 编译桌面二进制
         run: go build -trimpath -ldflags="-w -s" -o bin/binrag-desktop.exe ./cmd/desktop

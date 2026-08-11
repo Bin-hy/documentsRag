@@ -19,8 +19,12 @@ data/
 .data/
 
 # 前端依赖与产物
+node_modules/
 frontend/node_modules/
 */dist/
+
+# pnpm store（本仓库内缓存）
+.pnpm-store/
 
 # Go / 前端构建产物（保留占位 index.html 保证 go:embed 可编译）
 bin/

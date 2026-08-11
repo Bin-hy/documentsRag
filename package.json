@@ -1,0 +1,20 @@
+{
+  "name": "binrag",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:frontend": "pnpm --filter binrag-frontend dev",
+    "build:frontend": "pnpm --filter binrag-frontend build",
+    "dev:official": "pnpm --filter binrag-official dev",
+    "build:official": "pnpm --filter binrag-official build",
+    "build:all": "pnpm -r build"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}

@@ -16,9 +16,11 @@
 - **多知识库隔离** — 单向量集合 + payload 过滤，检索按知识库范围严格隔离
 - **异步入库** — 上传即返回任务 ID，后台 worker 池执行入库，失败自动/手动重试，状态持久化
 - **API Key 认证** — 密钥哈希存储、启停管理、使用时间追踪，接口安全可控
-- **Swagger 文档** — 基于 swaggo 自动生成的 OpenAPI 3 文档与交互式 UI（`/swagger/`），全部 16 条接口含参数与响应说明
+- **OIDC / GitHub 三方登录** — 支持任意符合规范的 OIDC Provider 与 GitHub OAuth2，登录后签发会话 JWT；登录用户拥有独立的知识库归属与「我的 MCP」自助凭据，与系统级 API Key 双通道并存
+- **MCP Server** — 基于 MCP 协议（streamable HTTP）的只读 RAG 能力服务：外部平台 / Agent / AI 应用可通过 `tools/call` 调用知识库问答、检索等 6 个 Tool；支持 API Key 认证（401）/ 授权（-32001）、Key 级与用户维度权限、双层开关与调用审计
+- **Swagger 文档** — 基于 swaggo 自动生成的 OpenAPI 3 文档与交互式 UI（`/swagger/`），全部接口含参数与响应说明
 - **RAG 评估** — 独立评估 CLI（`cmd/eval`）：数据集驱动的 Recall@K 检索评估 + LLM-as-Judge 准确性/忠实度评分，为分块/Embedding/Prompt 调优提供量化依据
-- **Web 前端界面** — Vue 3 + TypeScript 单页应用：对话问答（流式打字机 / Markdown 渲染 / 引用来源卡片 / 多会话）、知识库管理、文档拖拽上传与任务跟踪、API Key 管理，由 Go 二进制直接托管（单一可执行文件）
+- **Web 前端界面** — Vue 3 + TypeScript 单页应用：对话问答（流式打字机 / Markdown 渲染 / 引用来源卡片 / 多会话）、知识库管理、文档拖拽上传与任务跟踪、API Key 管理、**「我的 MCP」自助管理页**，由 Go 二进制直接托管（单一可执行文件）
 - **桌面应用** — Wails v3 打包 macOS 安装包（.app / .dmg），内嵌完整后端，安装即用；Web 与桌面共用同一套前端代码
 
 ## 🏗 架构
@@ -31,10 +33,17 @@ graph TB
     end
 
     subgraph API层
-        HTTP --> AUTH[API Key 认证]
+        HTTP --> AUTH[认证: API Key / OIDC 会话 JWT]
         AUTH --> KB[知识库管理]
         AUTH --> DOC[文档上传]
         AUTH --> CHAT[问答 / SSE 流式]
+    end
+
+    subgraph MCP层
+        EXT[外部 Agent / 平台] -->|streamable HTTP /mcp| MCP[MCP Server]
+        MCP --> MCPAUTH[API Key 认证 / 授权]
+        MCPAUTH -->|6 个只读 Tool| RAGM[MCP 调用 RAG 能力]
+        RAGM --> R
     end
 
     subgraph 入库链路
@@ -71,12 +80,13 @@ graph TB
 | 元数据存储 | PostgreSQL（pgx / 连接池） |
 | Embedding / LLM | OpenAI 兼容接口（GPT / 豆包 / DeepSeek / 本地 vLLM 等，base_url 切换） |
 | 检索 | 向量 + BM25 + RRF 融合 + Cross-encoder 重排序 |
+| MCP | mark3labs/mcp-go（streamable HTTP，2025-03-26 协议） |
 | 评估 | 数据集 + Recall@K + LLM-as-Judge（准确性/忠实度），`cmd/eval` CLI |
 | API 文档 | swaggo 生成 OpenAPI 3 + Swagger UI（`/swagger/`） |
 | 前端测试 | vitest（SSE 解析 / 流式降级状态机） |
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus + Pinia + marked/highlight.js |
 | 桌面壳 | Wails v3（macOS .app / .dmg，内嵌 Go 后端） |
-| 认证 | API Key（SHA-256 哈希存储） |
+| 认证 | API Key（SHA-256 哈希存储）+ OIDC / GitHub 三方登录（会话 JWT） |
 | 容器化 | Docker Compose（Qdrant + PostgreSQL） |
 
 ## 🚀 快速开始
@@ -126,6 +136,23 @@ reranker:        # 重排序模型（可选）
 
 server:
   bootstrap_api_key: "sk-your-bootstrap-key"   # 首次启动种子密钥
+
+oidc:                # 三方登录（可选；不启用则仅 API Key）
+  enabled: false
+  public_url: "https://rag.example.com"        # 外部可访问基址（拼回调地址）
+  jwt_secret: ""                                # 会话 JWT 密钥（留空=启动时随机生成）
+  providers:
+    - name: github                              # GitHub OAuth2（type 固定 oauth2）
+      type: oauth2
+      display_name: GitHub
+      client_id: ""
+      client_secret: ""
+    # - name: company                          # 自定义 OIDC Provider
+    #   type: oidc
+    #   display_name: 公司 SSO
+    #   client_id: ""
+    #   client_secret: ""
+    #   issuer: "https://sso.company.com"
 ```
 
 ### 3. 构建并启动服务
@@ -224,6 +251,55 @@ wails3 task package:dmg      # 可选：再生成 bin/BinRag.dmg 安装映像
 - **桌面版**：macOS（.app + .dmg）、Windows（.exe，需 MinGW）
 - 前端缓存与 Go 构建缓存加速重复构建
 
+## 🔌 MCP Server
+
+基于 MCP 协议（streamable HTTP）向外部平台 / Agent / AI 应用开放只读 RAG 能力（问答、检索、知识库与任务查询），与 REST API 同进程部署、复用同一套认证与权限体系。
+
+### 配置
+
+```yaml
+server:
+  mcp:
+    enabled: false          # 默认关闭，显式开启后才挂载 /mcp
+    path: "/mcp"            # MCP 端点路径
+    audit_param_limit: 2000 # 审计参数截断长度（字符）
+```
+
+> `enabled` / `path` 影响路由挂载，修改后需重启生效；全局开关（bootstrap API Key 可在「系统配置 → MCP Server」中修改）。
+
+### 认证与授权
+
+- **认证**：`Authorization: Bearer <API Key>`（SHA-256 校验）；缺失 / 无效 / 停用 Key → **HTTP 401**
+- **授权**：Tool 白名单 / 知识库越权 / 任务越权 → JSON-RPC error **-32001**（越权与不存在统一消息，不泄露资源存在性）
+- **双层开关**：全局 `mcp.enabled`（部署级）+ 用户凭据启用状态（用户级）
+- **权限模型**：系统级 API Key（owner 为空）可配置全量权限（bootstrap 管理）；登录用户可在「我的 MCP」页自助生成**绑定自己的凭据**，知识库范围限于自己的知识库
+
+### 提供的 Tool（只读）
+
+| Tool | 说明 |
+|------|------|
+| `list_knowledge_bases` | 列出当前凭据可访问的知识库 |
+| `get_knowledge_base` | 知识库详情（无权限按不存在处理） |
+| `retrieve` | 纯检索：召回 chunk 与来源 |
+| `ask` | RAG 问答：返回回答与引用来源（不暴露内部推理） |
+| `list_documents` | 知识库内文档列表 |
+| `get_task` | 入库任务状态（按任务所属知识库校验权限） |
+
+### 客户端接入示例
+
+```json
+{
+  "mcpServers": {
+    "binrag": {
+      "url": "http://localhost:8085/mcp",
+      "headers": { "Authorization": "Bearer <API Key>" }
+    }
+  }
+}
+```
+
+支持 streamable HTTP 的 MCP 客户端（Claude Desktop、Cursor、自研 Agent 等）配置后即可调用；`initialize` → `tools/list` → `tools/call` 标准握手。REST 管理接口：`PUT /api/v1/api-keys/:id/permissions`（系统级，bootstrap）、`/api/v1/mcp/my/*`（用户自助）。
+
 ## 📡 API 概览
 
 | 方法 | 路径 | 说明 |
@@ -240,6 +316,17 @@ wails3 task package:dmg      # 可选：再生成 bin/BinRag.dmg 安装映像
 | GET | `/api/v1/chat/history?session_id=` | 对话历史 |
 | POST / GET / DELETE | `/api/v1/api-keys` | API Key 创建 / 列表 / 删除 |
 | POST | `/api/v1/api-keys/:id/toggle` | 启用 / 停用 API Key |
+| PUT | `/api/v1/api-keys/:id/permissions` | 更新 API Key 的 MCP 权限（bootstrap） |
+| GET | `/api/v1/auth/providers` | 三方登录 Provider 列表（公开） |
+| GET | `/api/v1/auth/oidc/:provider/login` | OIDC 授权跳转（公开） |
+| GET | `/api/v1/auth/github/login` | GitHub 授权跳转（公开） |
+| POST | `/api/v1/auth/exchange` | 登录票据兑换会话 JWT（公开） |
+| GET | `/api/v1/auth/me` | 当前登录身份（API Key / 用户） |
+| GET | `/api/v1/mcp/my/status` | 「我的 MCP」状态（全局开关 + 我的凭据） |
+| POST / DELETE | `/api/v1/mcp/my/key` | 生成（明文仅一次）/ 吊销我的 MCP 凭据 |
+| POST | `/api/v1/mcp/my/key/toggle` | 启用 / 停用我的 MCP 凭据 |
+| PUT | `/api/v1/mcp/my/key/permissions` | 配置我的 MCP 权限（知识库限自己的） |
+| POST | `/mcp` | MCP 端点（streamable HTTP：initialize / tools / call） |
 | GET | `/swagger/index.html` | Swagger UI（公开） |
 | GET | `/swagger/doc.json` | OpenAPI 3 文档 JSON（公开） |
 
@@ -285,6 +372,8 @@ internal/
 ├── app/                 服务装配（PostgreSQL / worker / 引擎 / 路由，Web 与桌面共用）
 ├── webui/               前端静态资源托管（go:embed dist + SPA 回退）
 ├── api/                 HTTP 层：路由、中间件（认证/日志/CORS/限流）、Handler、SSE、Swagger 注解
+├── auth/                认证：OIDC / GitHub 三方登录、会话 JWT 签发与校验、用户身份
+├── mcp/                 MCP Server：streamable HTTP、认证/授权网关层、6 个只读 Tool、异步审计
 ├── eval/                RAG 评估：数据集加载 / Recall@K / LLM-as-Judge / 报告
 ├── store/               PostgreSQL 元数据存储：知识库/文档/任务/API Key/对话历史
 ├── task/                异步入库 worker 池（状态机 + 失败重试 + 重启恢复）
@@ -314,6 +403,8 @@ docs/                    各阶段的 spec / plan / task / checklist 设计文�
 | 七 | API 层与知识库管理（REST / 异步入库 / 认证） | ✅ 完成 |
 | 八 | 前端界面（Web SPA + Wails 桌面，对话/知识库/文档/密钥管理） | ✅ 完成 |
 | 九 | RAG 评估与优化（评估 CLI：Recall@K / LLM-as-Judge，为调优提供量化依据） | ✅ 完成 |
+| 十 | MCP Server（streamable HTTP 只读 RAG 能力 + 认证/授权/审计 + 用户维度凭据自助管理） | ✅ 完成 |
+| 十一 | OIDC / GitHub 三方登录（会话 JWT + 用户体系 + 用户知识库归属） | ✅ 完成 |
 
 每个阶段的完整设计文档（spec → plan → task → checklist）见 `docs/` 目录。
 
