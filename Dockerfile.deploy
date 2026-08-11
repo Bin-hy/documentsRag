@@ -41,8 +41,12 @@ COPY official/package.json official/package.json
 RUN npm install -g pnpm@10.33.0 \
     && pnpm install --frozen-lockfile
 
-# 拷贝前端源码并构建（vite.config.ts 已配置 outDir=../internal/webui/dist）
-COPY frontend/ ./
+# 拷贝前端源码并构建（vite.config.ts 已配置 outDir=../internal/webui/dist）。
+# 注意：必须复制到 ./frontend/ 子目录——若用 `COPY frontend/ ./` 会把 frontend
+# 内容散落到 /app 根目录并覆盖根 package.json（变成 binrag-frontend），导致
+# pnpm --filter 把 root 也纳入 scope 执行 build，root 上下文缺 vue-tsc 而报
+# spawn ENOENT（vue-tsc: not found）。
+COPY frontend/ ./frontend/
 RUN pnpm --filter binrag-frontend build
 
 # ---------- 阶段 2：编译 Go 二进制 ----------
