@@ -62,36 +62,12 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # 诊断：先单独构建 frontend 阶段（该阶段 `pnpm --filter binrag-frontend build`
-      # 曾以 exit 1 失败，但 annotation 只有一行摘要）。失败时把真实错误行写入
-      # ::error:: annotation，便于从 Check API 直接读取；通过后继续正常构建。
-      - name: 诊断前端构建（定位 pnpm build 失败根因）
-        shell: bash
-        run: |
-          set +e
-          docker build --target frontend -t binrag-frontend-debug:latest -f Dockerfile . > /tmp/fbuild.log 2>&1
-          code=$?
-          echo "frontend 构建退出码: $code"
-          if [ $code -ne 0 ]; then
-            echo "==== 日志尾部 ===="
-            tail -60 /tmp/fbuild.log
-            echo "==== 关键错误行（写入 annotation）===="
-            grep -iE "error|cannot|not found|failed|no matching|Could not|Segmentation|GLIBC|Illegal" /tmp/fbuild.log \
-              | tail -25 | while IFS= read -r line; do
-                echo "::error file=Dockerfile::$line"
-              done
-            exit 1
-          fi
-          echo "前端构建诊断通过"
-
       - name: 构建并推送
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
-          # 临时单平台（amd64）：排查 arm64 在 QEMU 模拟下 rolldown/napi 原生绑定
-          # 构建失败的问题；确认后再恢复 linux/amd64,linux/arm64 并拆分原生 arm64 runner
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
