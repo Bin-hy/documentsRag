@@ -87,7 +87,7 @@ graph TB
 | 前端 | Vue 3 + TypeScript + Vite + Element Plus + Pinia + marked/highlight.js |
 | 桌面壳 | Wails v3（macOS .app / .dmg，内嵌 Go 后端） |
 | 认证 | API Key（SHA-256 哈希存储）+ OIDC / GitHub 三方登录（会话 JWT） |
-| 容器化 | Docker Compose（Qdrant + PostgreSQL） |
+| 容器化 | Docker Compose 一键部署（Qdrant + PostgreSQL + 服务镜像，ghcr.io 自动发布） |
 
 ## 🚀 快速开始
 
@@ -96,15 +96,48 @@ graph TB
 - Go 1.26+
 - Docker（提供 Qdrant 与 PostgreSQL）
 
-### 1. 启动基础设施
+### 1. Docker 方式（推荐，无需本地安装 Go）
+
+仓库提供三个 Compose 文件，覆盖「一键部署 / 免编译生产 / 开发依赖」三种场景：
+
+**① 一键部署（构建镜像 + 数据库 + 运行）**
 
 ```bash
-docker compose up -d
+# 先编辑部署配置，填入你的模型服务信息（embedder / llm / reranker 与 bootstrap_api_key）
+vi deploy/configs/config.docker.yaml
+
+# 构建镜像并启动全部服务（PostgreSQL + Qdrant + binrag-server）
+docker compose up -d --build
 ```
 
-启动 Qdrant（向量库）与 PostgreSQL（元数据存储）。
+启动后访问 `http://localhost:8085`。构建产物同时打 tag `ghcr.io/bin-hy/documentsrag:latest`，可用 `docker push` 手动发布。
 
-### 2. 准备配置
+**② 免编译部署（直接拉取 ghcr.io 已发布镜像）**
+
+镜像由 GitHub Actions（`.github/workflows/docker-publish.yml`）在 main 分支与 `v*` 标签发布时自动构建并推送到 GitHub Container Registry：
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+```
+
+指定版本：`BINRAG_IMAGE_TAG=v1.2.0 docker compose -f docker-compose.prod.yml up -d`
+
+**③ 仅启动开发依赖（数据库等）**
+
+本地开发时只需 Qdrant 与 PostgreSQL，后端 / 前端跑在宿主机便于热重载：
+
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+启动 Qdrant（向量库，gRPC 6334）与 PostgreSQL（元数据存储，5432，账号 `binrag/binrag`）。
+
+### 2. 本地开发方式
+
+以下流程适用于在宿主机直接运行后端 / 前端（热重载调试）。依赖已由方式一 ③ 启动（或手动 `docker compose -f docker-compose.dev.yml up -d`）。
+
+### 3. 准备配置
 
 ```bash
 cp configs/config.yaml configs/config.local.yaml
@@ -155,7 +188,7 @@ oidc:                # 三方登录（可选；不启用则仅 API Key）
     #   issuer: "https://sso.company.com"
 ```
 
-### 3. 构建并启动服务
+### 4. 构建并启动服务
 
 Web 形态（单一可执行文件，自带前端界面）：
 
@@ -179,7 +212,7 @@ BINRAG_CONFIG=configs/prod.yaml go run ./cmd/server
 
 启动时可用 `bootstrap_api_key` 获取首个访问密钥（使用后建议从配置中移除）。
 
-### 4. 第一个请求
+### 5. 第一个请求
 
 ```bash
 # 创建知识库

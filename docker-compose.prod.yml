@@ -1,26 +1,22 @@
 # ============================================================================
-# BinRag 完整部署 Compose（用户一键启动：构建镜像 + 数据库 + 运行）
+# BinRag 生产部署 Compose（免编译：直接拉取 ghcr.io 已发布镜像）
 #
 # 用法：
 #   1. 编辑 deploy/configs/config.docker.yaml，填入你的模型服务信息
-#      （embedder / llm / reranker 的 key 与地址、server.bootstrap_api_key）
-#   2. docker compose up -d --build     # 构建镜像并启动全部服务
-#   3. 打开 http://localhost:8085
+#   2. docker compose -f docker-compose.prod.yml pull   # 拉取最新镜像
+#   3. docker compose -f docker-compose.prod.yml up -d  # 启动全部服务
+#   4. 打开 http://localhost:8085
 #
-# 本文件是「一键构建 + 运行」形态：binrag-server 使用仓库根 Dockerfile 现场构建，
-# 构建产物同时打 tag 为 ghcr.io/bin-hy/documentsrag:latest，方便手动 docker push。
-# 想免编译直接拉取已发布的镜像部署，请用 docker-compose.prod.yml。
+# 与 docker-compose.yml 的区别：binrag-server 不现场构建，直接使用
+# ghcr.io/bin-hy/documentsrag:<TAG> 镜像（默认 latest，可用环境变量覆盖：
+#   BINRAG_IMAGE_TAG=v1.2.0 docker compose -f docker-compose.prod.yml up -d）。
+# 镜像由 GitHub Actions（.github/workflows/docker-publish.yml）在 main 分支
+# 推送和 v* 标签发布时自动构建并推送到 GitHub Container Registry。
 #
-# 数据持久化：
-#   - 上传文件 → 命名卷 data_uploads（容器内 /app/data，uid 1000）
-#     如需直接查看宿主机文件，可改为 ./data:/app/data 并确保目录属主 1000:1000
-#     （sudo chown -R 1000:1000 ./data）
-#   - 元数据   → PostgreSQL 卷 pg_data
-#   - 向量数据 → Qdrant 卷 qdrant_data
-# 开发环境（只起数据库依赖）请用 docker-compose.dev.yml。
+# 项目名固定 binrag-prod，与开发/一键构建环境的卷隔离。
 # ============================================================================
 
-name: binrag
+name: binrag-prod
 
 services:
   postgres:
@@ -50,10 +46,7 @@ services:
     restart: unless-stopped
 
   binrag-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ghcr.io/bin-hy/documentsrag:latest
+    image: ghcr.io/bin-hy/documentsrag:${BINRAG_IMAGE_TAG:-latest}
     ports:
       - "8085:8085"
     volumes:

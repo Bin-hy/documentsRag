@@ -62,9 +62,9 @@ hero:
 # 快速上手
 
 <Steps :steps="[
-  { title: '启动基础设施', desc: 'docker compose up -d — 拉起 Qdrant 向量库与 PostgreSQL 元数据存储' },
-  { title: '配置模型与密钥', desc: 'configs/config.local.yaml 填入 Embedding / LLM 模型地址与 bootstrap API Key' },
-  { title: '构建并启动', desc: 'npm run build && go build ./cmd/server → 浏览器访问 8085，API Key 登录使用' },
+  { title: '配置模型与密钥', desc: 'deploy/configs/config.docker.yaml 填入 Embedding / LLM 模型地址与 bootstrap API Key' },
+  { title: '一键 Docker 启动', desc: 'docker compose up -d --build — 构建镜像并启动 PostgreSQL + Qdrant + binrag-server' },
+  { title: '浏览器访问 8085', desc: 'http://localhost:8085 — 输入 API Key 登录使用（免编译可拉取 ghcr.io 镜像）' },
 ]" />
 
 ---

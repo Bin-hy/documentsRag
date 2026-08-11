@@ -1,0 +1,47 @@
+# ============================================================================
+# BinRag 开发环境 Compose（docker compose -f docker-compose.dev.yml up -d）
+#
+# 用途：仅启动开发所需的「外部依赖」——Qdrant（向量库）+ PostgreSQL（元数据），
+#       供本地直接运行后端（go run ./cmd/server -c configs/config.local.yaml）
+#       或前端（pnpm dev）时连接使用。
+#
+# 注意：
+#   - 本文件不构建/不运行 BinRag 服务本身（开发时进程跑在宿主机，便于热重载调试）。
+#   - 完整一键部署（构建镜像 + 数据库 + 运行）请用仓库根目录的 docker-compose.yml。
+#   - 项目名固定为 binrag-dev，与部署环境的卷/网络隔离，互不干扰。
+# ============================================================================
+
+name: binrag-dev
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"  # REST API
+      - "6334:6334"  # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=binrag
+      - POSTGRES_PASSWORD=binrag
+      - POSTGRES_DB=binrag
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U binrag"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  qdrant_data:
+  pg_data:

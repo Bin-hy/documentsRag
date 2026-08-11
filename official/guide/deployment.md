@@ -38,13 +38,19 @@ wails3 task package:dmg      # 可选：再生成 bin/BinRag.dmg 安装映像
 
 ## Docker 容器化
 
-项目提供 `docker-compose.yml` 与 `docker-compose.local.yml`：
+仓库提供三个 Compose 文件：
+
+- `docker-compose.yml` — 一键部署：现场构建镜像并启动 PostgreSQL + Qdrant + binrag-server
+- `docker-compose.prod.yml` — 免编译部署：直接拉取 ghcr.io 已发布镜像
+- `docker-compose.dev.yml` — 开发用：仅启动 Qdrant + PostgreSQL 基础设施依赖
 
 ```bash
-docker compose up -d          # 启动 Qdrant + PostgreSQL 基础设施
+docker compose up -d --build                          # 一键部署（先编辑 deploy/configs/config.docker.yaml）
+docker compose -f docker-compose.prod.yml up -d       # 拉取 ghcr.io/bin-hy/documentsrag 镜像部署
+docker compose -f docker-compose.dev.yml up -d        # 仅启动基础设施（本地开发用）
 ```
 
-应用容器化部署需自行构建镜像（二进制 + 配置），基础设施依赖 Qdrant / PostgreSQL。
+镜像由 GitHub Actions（`.github/workflows/docker-publish.yml`）在 main 分支与 `v*` 标签自动构建并推送到 GitHub Container Registry（`ghcr.io/bin-hy/documentsrag`，多架构 linux/amd64 + arm64）。完整教程见 [快速开始](/guide/getting-started)。
 
 ## 自动发布（GitHub Actions）
 

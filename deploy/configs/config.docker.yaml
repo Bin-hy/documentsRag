@@ -1,0 +1,273 @@
+# ============================================================================
+# BinRag Docker 部署专用配置（docker-compose.yml / docker-compose.prod.yml 使用）
+#
+# 由 docker compose 挂载到容器内 /app/configs/config.yaml（只读）。
+# 与本地配置的区别：
+#   - vectorstore.host 指向 compose 服务名 qdrant（gRPC 6334），而非 localhost
+#   - postgres.dsn     指向 compose 服务名 postgres（5432），账号 binrag/binrag
+#
+# 使用前必须填写（一键部署前先编辑本文件，避免问答时调用失败）：
+#   - embedder.base_url / api_key / model   向量模型（OpenAI 兼容，如 text-embedding-v4）
+#   - llm.base_url / api_key / model        问答模型（OpenAI 兼容，如 gpt-4o / deepseek）
+#   - reranker.*                            重排序模型（可选；无则把 retriever.enable_reranker 改 false）
+#   - server.bootstrap_api_key              首次启动种子 Key（建完第一个 API Key 后删除并重启）
+#
+# 字段省略时使用代码内置默认值；本文件基于 configs/config.yaml 修改生成。
+# ============================================================================
+
+# BinRag 配置文件
+
+# Embedding 提供者配置
+embedder:
+  # provider: openai / local（本地兼容 OpenAI 接口的模型）
+  provider: "openai"
+  # API 地址（本地模型时改为 Ollama/vLLM 地址，如 http://localhost:11434/v1）
+  base_url: "https://xxx"
+  # API Key
+  api_key: "sk-xxx"
+  # 模型名称
+  model: "text-embedding-v4"
+  # 向量维度
+  dimension: 1024
+  # 单次 API 调用最大条数
+  batch_size: 10
+  # 最大重试次数
+  max_retries: 3
+  # 限流 QPS
+  qps: 10
+
+# 向量存储配置（Qdrant）
+vectorstore:
+  # Qdrant gRPC 地址
+  host: "qdrant:6334"
+  # Collection 名称
+  collection_name: "binrag"
+  # 向量维度（需与 embedder.dimension 一致）
+  dimension: 1024
+  # 距离度量：cosine / euclid / dot
+  distance: "cosine"
+
+# 文档加载器配置
+loader:
+  # 全文最低可读文本量（中文+单词计数），低于该值判定为扫描件/空内容拒绝入库；0 禁用
+  # 默认 20：正常文档动辄数百，扫描件 PDF 图像指令通常 < 15
+  min_readable_chars: 20
+
+# 分块器配置
+chunker:
+  # 策略：fixed / recursive / heading
+  # fixed: 固定大小分块
+  # recursive: 递归分块，优先按标题分块，标题不足
+  # heading: 仅按标题分块
+  strategy: "recursive"
+  # 目标 chunk 大小（token 数）
+  chunk_size: 500
+  # 重叠大小（token 数）
+  chunk_overlap: 50
+  # Markdown 标题分块的目标层级
+  heading_level: 2
+
+# 检索器配置
+retriever:
+  # 最终返回的结果数量
+  top_k: 10
+  # RRF 融合常数（越大排名差距越小）
+  rrf_k: 60
+  # 向量检索权重（算法要求：vector_weight + bm25_weight 之和必须为 1）
+  vector_weight: 0.7
+  # BM25 关键词检索权重（算法要求：与 vector_weight 之和必须为 1）
+  bm25_weight: 0.3
+  # 是否启用 BM25 混合检索
+  enable_bm25: true
+  # 是否启用 Reranker 重排序
+  enable_reranker: true
+
+# 重排序配置（支持两种模式）
+# mode=api（默认）：调用 /v1/rerank 专用重排接口（Jina/Cohere/vLLM 等）
+# mode=llm / ollama：无专用 rerank 端点时，用通用大模型（chat/completions，如 Ollama）对候选打分重排
+reranker:
+  # API 地址（根地址，代码会自动拼接路径：api 模式拼 /v1/rerank，llm 模式拼 /v1/chat/completions）
+  base_url: "https://xxx"
+  # API Key
+  api_key: "sk-xxx"
+  # 模型名称（mode=llm 时填大模型名，如 qwen2.5:3b）
+  model: "bge-reranker-v2-m3"
+  # 重排序模式：api（默认）/ llm / ollama
+  mode: "api"
+  # 重排序后保留的结果数量
+  top_n: 5
+  # 最大重试次数
+  max_retries: 3
+  # 限流 QPS
+  qps: 10
+  # ---- mode=llm 专用（预留配置，可不填）----
+  # 自定义打分 prompt 模板，占位符 {query}、{document}；留空使用内置默认模板
+  llm_prompt_template: ""
+  # 打分采样温度，默认 0（打分场景建议保持 0 保证确定性）
+  llm_temperature: 0
+
+# LLM 提供者配置（OpenAI 兼容 /v1/chat/completions，支持 GPT/豆包/DeepSeek/vLLM 等）
+llm:
+  # API 地址（OpenAI 兼容根地址，不要带 /v1 后缀；代码会自动拼接 /v1/chat/completions）
+  # 本地模型如 Ollama 填 http://localhost:11434，vLLM 填 http://localhost:8000
+  base_url: "https://xxx"
+  # API Key（本地模型可留空，省略鉴权头）
+  api_key: "sk-xxx"
+  # 模型名称
+  model: "gpt-4o"
+  # 生成温度
+  temperature: 0.7
+  # 单次生成最大 token 数
+  max_tokens: 2048
+  # 最大重试次数
+  max_retries: 3
+  # 限流 QPS
+  qps: 10
+  # HTTP 超时（秒）
+  timeout: 60
+
+# RAG 编排配置
+rag:
+  # 检索返回的片段数量
+  top_k: 5
+  # 注入上下文的 token 预算（超预算截断）
+  max_context_tokens: 2048
+  # 注入上下文的片段数量上限
+  max_chunks: 5
+  # 是否启用 Query 改写（不配置默认启用）
+  enable_rewrite: true
+  # 是否启用 Multi-Query 多查询（false/不配置 = 单查询；true = 生成多路变体并行检索 + RRF 融合）
+  multi_query_enabled: false
+  # 多查询变体数量（默认 3）
+  multi_query_count: 3
+  # 多路检索并发上限（默认 3）
+  multi_query_concurrency: 3
+  # 是否启用 Decomposition 问题分解（false/不配置 = 关闭；true = LLM 判定复杂时拆子问题检索综合）
+  decomposition_enabled: false
+  # 分解模式：parallel（并行独立）/ sequential（顺序，前序子问题上下文作为后续参考）
+  decomposition_mode: parallel
+  # 子问题上限（默认 5）
+  decomposition_max_sub: 5
+  # 是否启用 Step-Back 回退查询（false/不配置 = 关闭；true = 判定需要时先回退检索再精答）
+  step_back_enabled: false
+  # 是否启用 RAG 路由（false/不配置 = 关闭；true = LLM 判定复杂度自动分流 simple/medium/complex）
+  routing_enabled: false
+  # 路由判定失败时的回退策略（direct / multi_query / decomposition，默认 multi_query）
+  routing_fallback: multi_query
+  # 是否启用 HyDE 假设文档（false/不配置 = 关闭；true = 生成假设文档向量检索，需 Embedding 配额）
+  hyde_enabled: false
+  # 简单查询是否跳过 HyDE（true/不配置 = 跳过，节省成本）
+  hyde_skip_simple: true
+  # 全局默认检索策略（三级覆盖：全局 → 知识库 → 单次请求；字段空 = 继承低层级）
+  strategy:
+    # 查询模式：single / multi
+    query: multi
+    # 多路融合：rrf / none
+    fusion: rrf
+    # 问题分解：off / parallel / sequential
+    decomposition: off
+    # 回退查询：off / on
+    step_back: off
+    # HyDE 假设文档：off / on
+    hyde: off
+    # 自动路由：off / auto
+    routing: auto
+    # 思考链路：off / on（RAG 中间过程分步展示）
+    thinking: "on"
+    # 允许的数据源（数据源路由：vector_store / web_search）
+    # 空 = 默认仅 vector_store（私有性默认：不会路由到外部数据源）
+    # web_search 为占位数据源，未接入真实搜索引擎前不可用；接入后如
+    # data_sources: [vector_store, web_search] 即可允许 LLM 路由到 web
+    data_sources: []
+  # 对话历史容量（超出丢弃最旧消息）
+  history_capacity: 50
+  # 注入生成请求的历史消息条数
+  history_limit: 10
+  # Prompt 模板文件路径（留空使用内置默认模板）
+  system_prompt_path: ""
+  context_template_path: ""
+  rewrite_template_path: ""
+
+# 联网搜索配置（增强模式 web_search tool-use / 数据源）
+web_search:
+  # 提供者：bocha（第一版）
+  provider: "bocha"
+  # API 地址（留空使用提供者官方地址）
+  base_url: ""
+  # API Key（留空 = 未就绪，增强面板标记不可用）
+  api_key: ""
+  # 单次搜索返回条数
+  count: 5
+  # 请求超时（秒）
+  timeout: 30
+  # 限流 QPS
+  qps: 1
+
+# 元数据存储（PostgreSQL）
+postgres:
+  # 连接串（docker-compose 默认账号）
+  dsn: "postgres://binrag:binrag@postgres:5432/binrag"
+
+# HTTP 服务配置
+server:
+  # 监听端口
+  port: 8085
+  # 上传文件存储目录
+  file_storage_dir: "./data/uploads"
+  # 上传大小上限（MB）
+  upload_max_size_mb: 1024
+  # 入库 worker 并发数
+  worker_count: 5
+  # 任务失败最大重试次数
+  task_max_retries: 3
+  # 是否启用 API Key 认证
+  auth_enabled: true
+  # 首次启动种子 API Key（建完首个 Key 后建议删除该配置）
+  bootstrap_api_key: ""
+  # 全局限流 QPS（0 表示不限制）
+  rate_limit_qps: 0
+  # MCP Server（只读 RAG 能力，默认关闭——显式 enabled: true 后才挂载 /mcp）
+  mcp:
+    enabled: false
+    path: "/mcp"
+    audit_param_limit: 2000
+
+# 三方登录配置（可选）
+# 自定义 Provider 使用 OIDC（type: oidc）；GitHub 使用 OAuth2 适配（type: oauth2，name 固定为 github）
+# 启用后：public_url 必填（用于拼回调地址），OIDC provider 启动时执行 discovery（失败则启动失败）
+# 注意：GitHub 无用户 OIDC 端点，仅支持 OAuth2；回调地址需在各 Provider 后台登记
+#   OIDC:   <public_url>/api/v1/auth/oidc/{name}/callback
+#   GitHub: <public_url>/api/v1/auth/github/callback
+oidc:
+  enabled: false
+  # 外部可访问基址（反向代理/域名；桌面版不适用，保持 false）
+  public_url: "https://rag.example.com"
+  # 会话 JWT 密钥（留空 = 启动时自动生成随机密钥，重启后旧会话失效）
+  jwt_secret: ""
+  # 会话 JWT 有效期（分钟）
+  jwt_expire_minutes: 1200
+  providers:
+    # GitHub（OAuth2 适配；client_id/client_secret 在 GitHub OAuth Apps 创建）
+    - name: github
+      type: oauth2
+      display_name: GitHub
+      client_id: ""
+      client_secret: ""
+      # 可选：GitHub OAuth scope，默认最小权限 ["read:user"]
+      # scope:
+      #   - read:user
+      # 可选：自定义回调地址，默认 <public_url>/api/v1/auth/github/callback
+      # redirect_url: "https://rag.example.com/api/v1/auth/github/callback"
+    # 自定义 OIDC Provider（任意符合规范的 issuer）
+    # - name: company
+    #   type: oidc
+    #   display_name: 公司 SSO
+    #   client_id: ""
+    #   client_secret: ""
+    #   issuer: "https://sso.company.com"
+    #   # 可选 scope，默认 ["openid","profile","email"]
+    #   scope:
+    #     - openid
+    #     - profile
+    #     - email
+

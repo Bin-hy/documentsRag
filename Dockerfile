@@ -1,30 +1,27 @@
 # ============================================================================
-# BinRag 生产部署镜像（dokploy Dockerfile 模式 / 任意 Docker 环境）
+# BinRag 标准构建镜像（docker build / docker compose build 的默认入口）
 #
 # 多阶段构建：
-#   阶段 1 frontend : Node 22 构建 Vue 3 前端（产物输出 internal/webui/dist）
+#   阶段 1 frontend : Node 22 + pnpm 构建 Vue 3 前端（产物输出 internal/webui/dist）
 #   阶段 2 backend  : Go 1.26 编译单二进制（CGO_ENABLED=0，go:embed 嵌入前端）
 #   阶段 3 runtime  : Alpine 精简运行时（仅二进制 + CA 证书 + 时区 + 空目录）
 #
-# 镜像不包含任何配置/数据：
-#   - 配置文件由外部挂载到 /app/configs/config.yaml（缺失则启动即失败，fail-fast）
-#   - 上传数据由外部挂载到 /app/data（file_storage_dir=./data/uploads）
+# 前端依赖使用 pnpm workspace 管理（lock 文件在仓库根目录 pnpm-lock.yaml，
+# frontend 无 package-lock.json），因此必须用 pnpm install + --filter 构建，
+# 与 .github/workflows/ci.yml 的构建方式保持一致。
 #
-# 产物：单一可执行文件，同源托管 API 与前端静态资源（无跨域，SSE 流式顺畅）。
-# 架构：单服务不分离；Cloudflare 通过 DNS 代理 / Tunnel 提供 CDN 与 HTTPS。
+# 镜像不包含任何配置/数据（fail-fast）：
+#   - 配置文件由外部挂载到 /app/configs/config.yaml（缺失则启动即失败）
+#   - 上传数据由外部挂载到 /app/data（file_storage_dir=./data/uploads）
+# 一键部署见 docker-compose.yml（自动挂载 deploy/configs/config.docker.yaml）。
 #
 # 构建：
-#   docker build -f Dockerfile.deploy -t binrag-server:latest .
-# 运行（需先有 PostgreSQL 与 Qdrant；配置/数据必须挂载，见 docs/dokploy-deploy.md）：
-#   docker run -d -p 8085:8085 \
-#     -v /opt/dokploy/binrag/config.yaml:/app/configs/config.yaml:ro \
-#     -v /opt/dokploy/binrag/data:/app/data \
-#     binrag-server:latest
+#   docker build -t binrag-server:latest .
+# 或一键（含数据库等全部依赖）：
+#   docker compose up -d --build
 # ============================================================================
 
 # ---------- 阶段 1：构建前端 ----------
-# 注意：前端依赖由 pnpm workspace 管理（lock 文件在仓库根目录 pnpm-lock.yaml，
-# frontend 无 package-lock.json），构建方式与仓库根 Dockerfile 保持一致。
 FROM node:22-alpine AS frontend
 
 WORKDIR /app
@@ -52,7 +49,7 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# 拷贝源码（.dockerignore 已排除 dist / node_modules 等构建产物）
+# 拷贝源码（.dockerignore 已排除 dist / node_modules / configs 等）
 COPY . .
 
 # 覆盖为前端阶段的最新构建产物（go:embed 编译时打包进二进制）
@@ -74,7 +71,7 @@ RUN apk add --no-cache ca-certificates tzdata \
 WORKDIR /app
 
 # 仅拷贝二进制。生产配置/数据全部来自外部挂载，镜像不内置任何配置文件：
-#   - /app/configs/config.yaml   配置文件（Dokploy Volume 或 File Mount）
+#   - /app/configs/config.yaml   配置文件（docker compose 挂载 deploy/configs/config.docker.yaml）
 #   - /app/data                  上传文件持久化（file_storage_dir=./data/uploads）
 # 未挂载配置时服务启动即失败（fail-fast），避免误用默认值运行
 COPY --from=backend /out/binrag-server ./binrag-server

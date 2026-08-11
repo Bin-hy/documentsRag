@@ -1,5 +1,5 @@
 # ============================================================================
-# Docker 构建上下文排除（配合 Dockerfile.deploy 使用）
+# Docker 构建上下文排除（配合根目录 Dockerfile / Dockerfile.deploy 使用）
 # 只保留构建所需源码，避免把本地产物/密钥/元数据打进上下文
 # ============================================================================
 
@@ -27,8 +27,14 @@ build
 *.exe
 *.test
 
-# 前端依赖与本地产物（镜像内重新 npm ci + build）
-frontend/node_modules
+# 官网站点（pnpm workspace 另一包）源码保留：pnpm install 需解析其 package.json；
+# 其 node_modules 与 dist 由下方 **/node_modules、*/dist 排除
+
+# 部署配置模板（运行时经 volume 挂载，含用户密钥，禁止进镜像）
+deploy
+
+# 所有 node_modules（pnpm workspace 每包一份；镜像内重新 pnpm install）
+**/node_modules
 */dist
 
 # 日志与系统文件
