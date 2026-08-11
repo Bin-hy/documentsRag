@@ -37,7 +37,7 @@
 3. 用 HTTP 客户端模拟 `initialize` → `tools/list` → `tools/call`，打印原始 JSON-RPC 响应
 4. **记录结论**：`tools/call` handler 返回 error 时 SDK 的实际 JSON-RPC 映射（isError 结果 vs JSON-RPC error）；自定义 -32001 是否可行；同时确认未认证请求的行为
 
-**验证：** 探针输出展示 tools/call 响应体；结论写入本任务结果，作为 T6 的实现依据（若 SDK 不支持自定义 error code，T6 改用「isError 结果 + 统一消息」回退方案，错误语义不变）
+**验证：** 探针输出展示 tools/call 响应体；结论已落实（见 T6 与「实现说明」）：SDK 不支持自定义 error code，`-32001` 由网关层（server.go gateway）在转发前直接构造，错误语义不变（非 isError 回退——网关层方案更贴近 spec 约束「授权失败 -32001」）
 
 ## T2: config 扩展 MCPConfig
 
@@ -163,7 +163,7 @@
 **步骤：**
 1. `NewHandler(deps Dependencies) http.Handler`：认证层包装（T8）→ mark3labs `server.NewServer`（Name/Version）→ `NewStreamableHTTPServer`
 2. 注册 6 个 tool（inputSchema 按 plan Tool 规格：string/number/boolean 类型）
-3. **tools/list 返回全部 6 个已注册 Tool**；未授权拦截在 tools/call 调用层（F4，不按 Key 过滤列表）
+3. **tools/list 返回全部 6 个已注册 Tool**；未授权拦截在**网关层**（server.go gateway 解析 tools/call body 后返回 -32001，F4；不按 Key 过滤列表）
 4. 从 request context 读取 keyCtx 注入 tool 调用（mcp-go 的 ctx 传递方式按 T1 探针确认）
 5. Dependencies 含 `Audit *AuditSink`
 

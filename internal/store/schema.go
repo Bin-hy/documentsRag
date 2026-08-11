@@ -89,6 +89,12 @@ ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_kb_scope TEXT NOT NULL DEFAULT
 ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_kb_ids TEXT[] NOT NULL DEFAULT '{}';
 `
 
+// apiKeyOwnerMigration API Key 用户归属（幂等：NULL = 系统级 Key；非 NULL = 用户 MCP 凭据，每用户至多一个）
+const apiKeyOwnerMigration = `
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS owner_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id) WHERE owner_id IS NOT NULL;
+`
+
 // mcpAuditLogsDDL MCP 调用审计表（仅记录 api_key_id 引用与截断参数，绝不存 Secret，spec F7）
 const mcpAuditLogsDDL = `
 CREATE TABLE IF NOT EXISTS mcp_audit_logs (
@@ -122,6 +128,9 @@ func (s *pgStore) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.pool.Exec(ctx, apiKeyMCPPermissionsMigration); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, apiKeyOwnerMigration); err != nil {
 		return err
 	}
 	_, err := s.pool.Exec(ctx, mcpAuditLogsDDL)

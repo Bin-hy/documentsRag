@@ -39,10 +39,16 @@
 ## REST 管理接口
 
 - [ ] 系统级 API Key 可查询任意 Key 的 MCP 权限（验证：`GET /api/v1/api-keys` 返回 `mcp_tools/mcp_kb_scope/mcp_kb_ids`）
-- [ ] 系统级 API Key 可更新 Key 的 MCP 权限（验证：`PUT /api/v1/api-keys/:id/permissions` 后再次 GET 确认生效）
+- [ ] **仅 bootstrap API Key 可更新** Key 的 MCP 权限（验证：`PUT /api/v1/api-keys/:id/permissions` 用 bootstrap → 200；用普通 API Key → 403）
 - [ ] 会话 JWT（非系统级身份）更新权限 → HTTP 403（验证）
 - [ ] 迁移后历史 Key 的权限字段为空（无任何 MCP 权限）（验证：迁移后 `SELECT` 权限列）
 - [ ] 现有 REST API 行为不受影响（验证：既有 api/auth/kb 测试全绿）
+
+## 安全（安全审查加固）
+
+- [ ] handler 内部错误（引擎/存储失败）不向客户端泄漏细节（验证：ask 引擎报错 → isError 消息为统一「工具执行失败」，详情仅日志/审计）
+- [ ] `session_id` 绑定调用方 KeyID，跨 Key 复用同名 session 不串读会话历史（验证：同一 session_id 不同 Key 的 ask 结果隔离）
+- [ ] 授权失败（-32001）与认证失败（401）语义严格区分（验证：集成测试断言 code/状态码）
 
 ## 编译与测试
 

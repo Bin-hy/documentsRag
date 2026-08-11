@@ -5,12 +5,13 @@ import (
 	"testing"
 )
 
-// 系统级 Key 可查询/更新 MCP 权限；历史 Key 默认无 MCP 权限；会话 JWT 越权 403
+// bootstrap Key 可查询/更新 MCP 权限；历史 Key 默认无 MCP 权限；
+// 普通 API Key / 会话 JWT 更新权限 → 403（安全审查 HIGH 修复：仅 bootstrap 可授予 MCP 权限）
 func TestAPIKeyPermissions(t *testing.T) {
-	env := newTestEnv(t)
+	env, bootstrapKey := newConfigTestEnv(t)
 
 	// 历史 Key（无 MCP 权限字段）列表返回空权限
-	w := doReq(t, env.router, "GET", "/api/v1/api-keys", nil, testAPIKey)
+	w := doReq(t, env.router, "GET", "/api/v1/api-keys", nil, bootstrapKey)
 	if w.Code != 200 {
 		t.Fatalf("列表 Key 失败: %d", w.Code)
 	}
@@ -42,13 +43,13 @@ func TestAPIKeyPermissions(t *testing.T) {
 		"mcp_tools":    []string{"retrieve", "ask"},
 		"mcp_kb_scope": "allowlist",
 		"mcp_kb_ids":   []string{"kb-a", "kb-b"},
-	}, testAPIKey)
+	}, bootstrapKey)
 	if w.Code != 200 {
 		t.Fatalf("更新权限失败: %d %s", w.Code, w.Body.String())
 	}
 
 	// 更新后查询可见
-	w = doReq(t, env.router, "GET", "/api/v1/api-keys", nil, testAPIKey)
+	w = doReq(t, env.router, "GET", "/api/v1/api-keys", nil, bootstrapKey)
 	var resp2 struct {
 		Data []map[string]any `json:"data"`
 	}
@@ -65,12 +66,20 @@ func TestAPIKeyPermissions(t *testing.T) {
 		}
 	}
 
-	// 非法 scope → 400
+	// 非法 scope → 400（bootstrap）
 	w = doReq(t, env.router, "PUT", "/api/v1/api-keys/"+keyID+"/permissions", map[string]any{
 		"mcp_kb_scope": "weird",
-	}, testAPIKey)
+	}, bootstrapKey)
 	if w.Code != 400 {
 		t.Errorf("非法 scope 应 400，实际 %d", w.Code)
+	}
+
+	// 普通 API Key（非 bootstrap）更新权限 → 403（高危操作仅 bootstrap）
+	w = doReq(t, env.router, "PUT", "/api/v1/api-keys/"+keyID+"/permissions", map[string]any{
+		"mcp_kb_scope": "all",
+	}, testAPIKey)
+	if w.Code != 403 {
+		t.Errorf("普通 API Key 更新权限应 403，实际 %d", w.Code)
 	}
 
 	// 会话 JWT 更新 → 403

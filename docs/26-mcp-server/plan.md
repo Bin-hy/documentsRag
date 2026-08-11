@@ -177,14 +177,16 @@ type MCPConfig struct {
 MCP 客户端
   → POST /mcp
   → mcp 认证层：401（认证失败） | 通过 → context 写入 keyCtx
-  → mark3labs server 分发 tools/call
+  → 授权网关层（server.go gateway）：解析 tools/call body → Tool/KB/Task 授权检查 → 越权直接写 -32001
+  → mark3labs server 分发 tools/call（handler 内仅防御性 isError 兜底 + 业务 + 审计）
   → tool handler：
-      1. permission.ToolAllowed(keyCtx, toolName) 否 → ErrPermissionDenied
-      2. 解析知识库范围（list/get 校验 CanAccess；retrieve/ask 用 Resolve）
-      3. 调 store/retriever/engine
-      4. auditSink.Submit（异步投递；队列满/失败仅 warn，不阻塞）
+      1. 解析知识库范围（list/get 校验 CanAccess；retrieve/ask 用 Resolve，网关层已拦截越权）
+      2. 调 store/retriever/engine
+      3. auditSink.Submit（异步投递；队列满/失败仅 warn，不阻塞）
   → JSON-RPC 响应
 ```
+
+> **实现说明（探针结论 T1）**：mcp-go v0.57.0 的 `tools/call` handler 返回 error 固定映射 `-32603`，无法经 handler/middleware 返回自定义错误码。因此授权失败（Tool/KB/Task 越权）在**网关层**解析 JSON-RPC body 后直接构造 `-32001` 响应（spec F4/F5/F8）；handler 内不重复授权拒绝，仅保留防御性 isError 兜底。认证失败保持 HTTP 401（不进入 JSON-RPC）。
 
 ## 文件组织
 

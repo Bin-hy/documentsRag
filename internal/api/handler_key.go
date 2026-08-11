@@ -158,6 +158,11 @@ func (h *handler) UpdateAPIKeyPermissions(c *gin.Context) {
 	if !h.requireSystemKey(c) {
 		return
 	}
+	// MCP 权限授予是高危操作：仅 bootstrap API Key 可执行（防普通/MCP Key 自我提权，安全审查 HIGH）
+	if !c.GetBool("is_bootstrap") {
+		Fail(c, CodeForbidden, "需要 bootstrap API Key 才能授予 MCP 权限")
+		return
+	}
 	var req store.APIKeyPermissions
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, CodeBadRequest, "请求体无效: "+err.Error())

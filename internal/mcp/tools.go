@@ -119,7 +119,7 @@ func (t *tools) run(ctx context.Context, toolName string, args map[string]any, f
 	if kc := KeyCtxFrom(ctx); kc != nil && t.audit != nil {
 		status, errMsg := "success", ""
 		if err != nil {
-			status, errMsg = "error", err.Error()
+			status, errMsg = "error", err.Error() // 审计保留详情（内部可查）
 		}
 		t.audit.Submit(store.AuditLog{
 			APIKeyID:     kc.KeyID,
@@ -131,8 +131,18 @@ func (t *tools) run(ctx context.Context, toolName string, args map[string]any, f
 		})
 	}
 	if err != nil {
+		// 展示消息：业务/校验错误原样；内部错误（引擎/存储）统一通用消息，防细节泄漏（安全审查 MEDIUM）
+		msg := "工具执行失败，请稍后重试"
+		switch e := err.(type) {
+		case *PermissionError:
+			msg = e.Message()
+		case *ShowError:
+			msg = e.message
+		default:
+			slog.Error("MCP tool 执行失败", "tool", toolName, "err", err)
+		}
 		return &mcpgo.CallToolResult{
-			Content: []mcpgo.Content{mcpgo.NewTextContent(err.Error())},
+			Content: []mcpgo.Content{mcpgo.NewTextContent(msg)},
 			IsError: true,
 		}, nil
 	}
@@ -300,7 +310,7 @@ func (t *tools) handleAsk(ctx context.Context, req mcpgo.CallToolRequest) (*mcpg
 		args := argMap(req.Params.Arguments)
 		question := argString(args, "question")
 		if question == "" {
-			return nil, errors.New("question 不能为空")
+			return nil, NewShowError("question 不能为空")
 		}
 		kbIDs, err := kc.Scope.Resolve(argString(args, "kb_id"))
 		if err != nil {
@@ -314,6 +324,9 @@ func (t *tools) handleAsk(ctx context.Context, req mcpgo.CallToolRequest) (*mcpg
 		if sessionID == "" {
 			sessionID = uuid.New().String()
 		}
+		// 统一绑定 KeyID 前缀：所有 MCP ask 会话与调用方 Key 隔离，
+		// 防跨 Key 复用同名 session_id 串读会话历史（安全审查 MEDIUM）
+		sessionID = kc.KeyID + ":" + sessionID
 		var snap *config.Config
 		if t.cfg != nil {
 			snap = t.cfg.Get()

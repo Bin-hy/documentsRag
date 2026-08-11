@@ -175,10 +175,10 @@ func TestGetAPIKeyByHash_Hit(t *testing.T) {
 	s := &pgStore{pool: mock}
 	ts := now()
 
-	rows := pgxmock.NewRows([]string{"id", "name", "key_hash", "enabled", "last_used_at", "created_at", "mcp_tools", "mcp_kb_scope", "mcp_kb_ids"}).
-		AddRow("key-1", "默认", "abc123", true, nil, ts, []string{}, "", []string{})
+	rows := pgxmock.NewRows([]string{"id", "name", "key_hash", "enabled", "last_used_at", "created_at", "owner_id", "mcp_tools", "mcp_kb_scope", "mcp_kb_ids"}).
+		AddRow("key-1", "默认", "abc123", true, nil, ts, "", []string{}, "", []string{})
 
-	mock.ExpectQuery("SELECT id, name, key_hash, enabled, last_used_at, created_at, mcp_tools, mcp_kb_scope, mcp_kb_ids FROM api_keys WHERE key_hash = \\$1").
+	mock.ExpectQuery("SELECT id, name, key_hash, enabled, last_used_at, created_at, owner_id, mcp_tools, mcp_kb_scope, mcp_kb_ids FROM api_keys WHERE key_hash = \\$1").
 		WithArgs("abc123").
 		WillReturnRows(rows)
 
@@ -207,7 +207,7 @@ func TestGetAPIKeyByHash_Miss(t *testing.T) {
 	defer mock.Close()
 
 	s := &pgStore{pool: mock}
-	mock.ExpectQuery("SELECT id, name, key_hash, enabled, last_used_at, created_at, mcp_tools, mcp_kb_scope, mcp_kb_ids FROM api_keys WHERE key_hash = \\$1").
+	mock.ExpectQuery("SELECT id, name, key_hash, enabled, last_used_at, created_at, owner_id, mcp_tools, mcp_kb_scope, mcp_kb_ids FROM api_keys WHERE key_hash = \\$1").
 		WithArgs("nope").
 		WillReturnError(pgx.ErrNoRows)
 

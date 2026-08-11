@@ -15,6 +15,14 @@ type ConfigUpdateRequest struct {
 	Reranker    *RerankerPatch         `json:"reranker,omitempty"`
 	RAGStrategy *config.StrategyConfig `json:"rag_strategy,omitempty"`
 	Loader      *LoaderPatch           `json:"loader,omitempty"`
+	MCP         *MCPPatch              `json:"mcp,omitempty"`
+}
+
+// MCPPatch MCP Server 可修改字段（重启生效：enabled/path 影响路由挂载；audit_param_limit 在启动时创建 AuditSink）
+type MCPPatch struct {
+	Enabled         *bool   `json:"enabled,omitempty"`
+	Path            *string `json:"path,omitempty"`
+	AuditParamLimit *int    `json:"audit_param_limit,omitempty"`
 }
 
 // LLMPatch LLM 可修改字段（指针 = 仅更新提供的字段）
@@ -97,6 +105,14 @@ type MutableConfigView struct {
 	Reranker    RerankerView          `json:"reranker"`
 	RAGStrategy config.StrategyConfig `json:"rag_strategy"`
 	Loader      LoaderView            `json:"loader"`
+	MCP         MCPView               `json:"mcp"`
+}
+
+// MCPView MCP Server 配置视图（前端 MCP 卡片数据源）
+type MCPView struct {
+	Enabled         bool   `json:"enabled"`
+	Path            string `json:"path"`
+	AuditParamLimit int    `json:"audit_param_limit"`
 }
 
 // ReadOnlyConfig 只读配置项（需重启生效）
@@ -144,6 +160,7 @@ func (h *handler) GetConfig(c *gin.Context) {
 			Reranker:    RerankerView{Model: cfg.Reranker.Model, TopN: cfg.Reranker.TopN},
 			RAGStrategy: cfg.RAG.Strategy,
 			Loader:      LoaderView{MinReadableChars: cfg.Loader.MinReadableChars},
+			MCP:         MCPView{Enabled: cfg.Server.MCP.Enabled, Path: cfg.Server.MCP.Path, AuditParamLimit: cfg.Server.MCP.AuditParamLimit},
 		},
 		ReadOnly: []ReadOnlyConfig{
 			{Key: "postgres.dsn", Value: maskDSN(cfg.Postgres.DSN), NeedsRestart: true},
@@ -238,6 +255,18 @@ func (h *handler) UpdateConfig(c *gin.Context) {
 	if req.Loader != nil && req.Loader.MinReadableChars != nil {
 		newCfg.Loader.MinReadableChars = *req.Loader.MinReadableChars
 	}
+	// MCP Server（重启生效：enabled/path 影响路由挂载，audit_param_limit 启动时创建 AuditSink）
+	if req.MCP != nil {
+		if req.MCP.Enabled != nil {
+			newCfg.Server.MCP.Enabled = *req.MCP.Enabled
+		}
+		if req.MCP.Path != nil {
+			newCfg.Server.MCP.Path = *req.MCP.Path
+		}
+		if req.MCP.AuditParamLimit != nil {
+			newCfg.Server.MCP.AuditParamLimit = *req.MCP.AuditParamLimit
+		}
+	}
 
 	// 更新：校验 → rebuild 试构建 → 写文件 → 原子替换
 	if err := h.cfgMgr.Update(&newCfg, h.rebuild); err != nil {
@@ -256,6 +285,7 @@ func (h *handler) UpdateConfig(c *gin.Context) {
 			Reranker:    RerankerView{Model: newCfg.Reranker.Model, TopN: newCfg.Reranker.TopN},
 			RAGStrategy: newCfg.RAG.Strategy,
 			Loader:      LoaderView{MinReadableChars: newCfg.Loader.MinReadableChars},
+			MCP:         MCPView{Enabled: newCfg.Server.MCP.Enabled, Path: newCfg.Server.MCP.Path, AuditParamLimit: newCfg.Server.MCP.AuditParamLimit},
 		},
 	}
 	OK(c, view)

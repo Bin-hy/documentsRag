@@ -17,9 +17,10 @@ type keyCtxKey struct{}
 // keyCtx 认证后的身份与权限（仅 Key ID 引用，不含 Secret/Authorization Token，spec F7）。
 // 不含 bootstrap 标记：MCP 认证层不识别 bootstrap，一律按 Key 权限字段授权（plan D6）。
 type keyCtx struct {
-	KeyID string
-	Tools []string // MCP Tool 白名单（空 = 无任何 MCP Tool 权限，spec F4/F6）
-	Scope KBPermission
+	KeyID   string
+	Tools   []string // MCP Tool 白名单（空 = 无任何 MCP Tool 权限，spec F4/F6）
+	Scope   KBPermission
+	OwnerID string // "" = 系统级 Key；非空 = 用户 MCP 凭据（gateway 按 owner 解析实际范围，spec F9）
 }
 
 // ctxWithKeyCtx 将 keyCtx 写入 request context
@@ -70,9 +71,10 @@ func authenticate(w http.ResponseWriter, r *http.Request, st keyLookup) (*keyCtx
 	}
 
 	return &keyCtx{
-		KeyID: key.ID,
-		Tools: key.MCPTools,
-		Scope: ParseScope(key.MCPKBScope, key.MCPKBIDs),
+		KeyID:   key.ID,
+		Tools:   key.MCPTools,
+		Scope:   ParseScope(key.MCPKBScope, key.MCPKBIDs),
+		OwnerID: key.OwnerID,
 	}, true
 }
 

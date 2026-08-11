@@ -241,6 +241,17 @@ func (f *fakeStore) DeleteAPIKey(ctx context.Context, id string) error {
 	return nil
 }
 func (f *fakeStore) TouchAPIKey(ctx context.Context, id string) error { return nil }
+func (f *fakeStore) GetAPIKeyByOwner(ctx context.Context, ownerID string) (*store.APIKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, k := range f.keys {
+		if k.OwnerID == ownerID {
+			kk := k
+			return &kk, nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p store.APIKeyPermissions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1169,6 +1180,11 @@ func newConfigTestEnv(t *testing.T) (*testEnv, string) {
 
 	cfgMgr := config.NewConfigManager(filepath.Join(t.TempDir(), "config.yaml"), globalCfg)
 
+	authMgr, err := auth.NewManager(&config.OIDCConfig{})
+	if err != nil {
+		t.Fatalf("初始化 auth manager 失败: %v", err)
+	}
+
 	router := NewRouter(Dependencies{
 		Config:   cfg,
 		CfgMgr:   cfgMgr,
@@ -1179,9 +1195,10 @@ func newConfigTestEnv(t *testing.T) (*testEnv, string) {
 		Registry: reg,
 		Engine:   func() rag.Engine { return fe },
 		History:  fh,
+		Auth:     authMgr,
 	})
 
-	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh}, testBootstrapKey
+	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh, authMgr: authMgr}, testBootstrapKey
 }
 
 const testBootstrapKey = "bootstrap-secret-key"

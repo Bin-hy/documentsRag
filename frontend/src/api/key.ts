@@ -25,3 +25,15 @@ export function toggleKey(id: string, enabled: boolean): Promise<unknown> {
 export function deleteKey(id: string): Promise<unknown> {
   return request<unknown>({ method: 'DELETE', url: `/api/v1/api-keys/${id}` })
 }
+
+// MCP 权限更新（PUT 全量替换；bootstrap-only，后端校验）
+export function updateKeyPermissions(
+  id: string,
+  perms: { mcp_tools?: string[]; mcp_kb_scope?: string; mcp_kb_ids?: string[] },
+): Promise<unknown> {
+  return request<unknown>({
+    method: 'PUT',
+    url: `/api/v1/api-keys/${id}/permissions`,
+    data: perms,
+  })
+}

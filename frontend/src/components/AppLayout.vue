@@ -3,7 +3,7 @@
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ChatDotRound, Collection, Key, Setting, Sunny, Moon, SwitchButton } from '@element-plus/icons-vue'
+import { ChatDotRound, Collection, Connection, Key, Setting, Sunny, Moon, SwitchButton } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -56,6 +56,10 @@ async function handleLogout() {
         <el-menu-item index="/keys">
           <el-icon><Key /></el-icon>
           <span>API Key</span>
+        </el-menu-item>
+        <el-menu-item index="/my-mcp">
+          <el-icon><Connection /></el-icon>
+          <span>我的 MCP</span>
         </el-menu-item>
         <el-menu-item index="/settings">
           <el-icon><Setting /></el-icon>

@@ -214,6 +214,93 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/api-keys/{id}/permissions": {
+            "put": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "全量更新 API Key 的 MCP 权限：mcp_tools（Tool 白名单，空 = 无 Tool 权限）、mcp_kb_scope（\"\" / \"all\" / \"allowlist\"）、mcp_kb_ids（allowlist 时的知识库白名单）；仅系统级 API Key 可操作",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "API Key"
+                ],
+                "summary": "更新 MCP 权限",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "API Key ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "MCP 权限配置",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/store.APIKeyPermissions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/api-keys/{id}/toggle": {
             "post": {
                 "security": [
@@ -1885,6 +1972,22 @@ const docTemplate = `{
                 "last_used_at": {
                     "type": "string"
                 },
+                "mcp_kb_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mcp_kb_scope": {
+                    "type": "string"
+                },
+                "mcp_tools": {
+                    "description": "MCP 权限（spec F4/F5/F6；空 = 无 MCP 权限）",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
                 "name": {
                     "type": "string"
                 }
@@ -2104,6 +2207,18 @@ const docTemplate = `{
                 "StepStepBack": "回退问题",
                 "StepTool": "工具调用（增强模式 function calling）"
             },
+            "x-enum-descriptions": [
+                "路由判定",
+                "单查询改写",
+                "多查询变体生成",
+                "检索（单路或多路）",
+                "重排序前后对比",
+                "最终目标 chunks",
+                "分解判定 + 子问题列表",
+                "回退问题",
+                "假设文档",
+                "工具调用（增强模式 function calling）"
+            ],
             "x-enum-varnames": [
                 "StepRouting",
                 "StepRewrite",
@@ -2116,6 +2231,29 @@ const docTemplate = `{
                 "StepHyDE",
                 "StepTool"
             ]
+        },
+        "store.APIKeyPermissions": {
+            "type": "object",
+            "properties": {
+                "mcp_kb_ids": {
+                    "description": "知识库白名单；nil = 清空",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mcp_kb_scope": {
+                    "description": "\"\" | \"all\" | \"allowlist\"",
+                    "type": "string"
+                },
+                "mcp_tools": {
+                    "description": "允许的 Tool 白名单；nil = 清空",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
         },
         "store.Document": {
             "type": "object",
@@ -2145,7 +2283,8 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "size": {
-                    "type": "integer"
+                    "type": "integer",
+                    "format": "int64"
                 },
                 "status": {
                     "description": "pending / processing / completed / failed",

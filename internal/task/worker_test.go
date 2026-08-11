@@ -40,6 +40,9 @@ func (f *fakeStore) CreateKB(ctx context.Context, kb store.KnowledgeBase) error 
 func (f *fakeStore) ListKBsByIDs(ctx context.Context, ids []string) ([]store.KnowledgeBase, error) {
 	return nil, nil
 }
+func (f *fakeStore) GetAPIKeyByOwner(ctx context.Context, ownerID string) (*store.APIKey, error) {
+	return nil, nil
+}
 func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p store.APIKeyPermissions) error {
 	return nil
 }

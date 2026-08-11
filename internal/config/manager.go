@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -129,6 +130,10 @@ func ValidateConfig(cfg *Config) error {
 	// Loader 阈值
 	if cfg.Loader.MinReadableChars < 0 {
 		return fmt.Errorf("Loader min_readable_chars 不能为负: %d", cfg.Loader.MinReadableChars)
+	}
+	// MCP path 必须以 / 开头（端点路径）；空表示使用默认 /mcp
+	if cfg.Server.MCP.Path != "" && !strings.HasPrefix(cfg.Server.MCP.Path, "/") {
+		return fmt.Errorf("server.mcp.path 必须以 / 开头: %q", cfg.Server.MCP.Path)
 	}
 	return nil
 }

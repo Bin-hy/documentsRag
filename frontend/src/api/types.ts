@@ -64,6 +64,10 @@ export interface ApiKeyView {
   enabled: boolean
   last_used_at: string | null
   created_at: string
+  // MCP 权限（spec F1：空 = 未配置，由后端返回空数组/空字符串）
+  mcp_tools: string[]
+  mcp_kb_scope: string // '' | 'all' | 'allowlist'
+  mcp_kb_ids: string[]
 }
 
 // 创建 API Key 响应（明文仅此一次）
@@ -217,7 +221,28 @@ export interface ConfigView {
     retriever: { top_k: number; rrf_k: number; vector_weight: number; bm25_weight: number }
     rag_strategy: StrategyConfig
     loader: { min_readable_chars: number }
+    mcp: { enabled: boolean; path: string; audit_param_limit: number }
   }
   read_only: Array<{ key: string; value: string; needs_restart: boolean }>
   is_bootstrap: boolean // 当前 Key 是否为 bootstrap（后端权威判断）
+}
+
+// —— 我的 MCP（用户维度凭据，spec F7）——
+export interface MyMCPKey {
+  id: string
+  enabled: boolean
+  mcp_tools: string[]
+  mcp_kb_scope: string // '' | 'all' | 'allowlist'
+  mcp_kb_ids: string[]
+}
+
+export interface MyMCPStatus {
+  global_enabled: boolean
+  key: MyMCPKey | null
+  mcp_path: string
+}
+
+export interface CreateMyKeyResult {
+  id: string
+  key: string // 明文仅此一次
 }

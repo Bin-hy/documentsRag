@@ -80,6 +80,8 @@ type APIKey struct {
 	Enabled    bool
 	LastUsedAt *time.Time
 	CreatedAt  time.Time
+	// OwnerID 用户归属："" = 系统级 Key（bootstrap/全局，MCP 全量权限）；非空 = 用户 MCP 凭据（users.id，每用户至多一个）
+	OwnerID string
 	// —— 以下为 MCP 权限（spec F4/F5/F6）——
 	MCPTools   []string // 允许调用的 MCP Tool 白名单；空 = 无任何 MCP 权限
 	MCPKBScope string   // ""（无 MCP 知识库权限）| "all"（全部）| "allowlist"（仅 MCPKBIDs）
@@ -144,6 +146,8 @@ type Store interface {
 	TouchAPIKey(ctx context.Context, id string) error
 	// UpdateAPIKeyPermissions 全量更新 Key 的 MCP 权限（PUT 语义；nil 切片视为清空）
 	UpdateAPIKeyPermissions(ctx context.Context, id string, p APIKeyPermissions) error
+	// GetAPIKeyByOwner 查询用户归属的 MCP 凭据（每用户至多一个；无则返回 nil）
+	GetAPIKeyByOwner(ctx context.Context, ownerID string) (*APIKey, error)
 	// AppendAuditLog 写入 MCP 调用审计记录（异步 worker 后台调用）
 	AppendAuditLog(ctx context.Context, log AuditLog) error
 	// 对话历史（由 PostgresHistoryStore 实现 rag.HistoryStore）

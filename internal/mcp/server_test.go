@@ -125,6 +125,17 @@ func (f *fakeStore) UpdateAPIKeyPermissions(ctx context.Context, id string, p st
 	f.keys[id] = k
 	return nil
 }
+func (f *fakeStore) GetAPIKeyByOwner(ctx context.Context, ownerID string) (*store.APIKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, k := range f.keys {
+		if k.OwnerID == ownerID {
+			kk := k
+			return &kk, nil
+		}
+	}
+	return nil, nil
+}
 func (f *fakeStore) auditCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -133,8 +144,16 @@ func (f *fakeStore) auditCount() int {
 
 // 未用方法空实现
 func (f *fakeStore) CreateKB(context.Context, store.KnowledgeBase) error { return nil }
-func (f *fakeStore) ListKBsByOwner(context.Context, string) ([]store.KnowledgeBase, error) {
-	return nil, nil
+func (f *fakeStore) ListKBsByOwner(ctx context.Context, ownerID string) ([]store.KnowledgeBase, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := []store.KnowledgeBase{}
+	for _, kb := range f.kbs {
+		if kb.OwnerID != nil && *kb.OwnerID == ownerID {
+			out = append(out, kb)
+		}
+	}
+	return out, nil
 }
 func (f *fakeStore) UpdateKB(context.Context, store.KnowledgeBase) error { return nil }
 func (f *fakeStore) DeleteKB(context.Context, string) error              { return nil }

@@ -9,6 +9,7 @@ const (
 	CodeUnauthorized = 401
 	CodeForbidden    = 403
 	CodeNotFound     = 404
+	CodeConflict     = 409
 	CodeInternal     = 500
 )
 

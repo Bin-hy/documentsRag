@@ -47,6 +47,17 @@ func NewKBForbidden() *PermissionError { return &PermissionError{message: msgKBF
 // NewTaskForbidden 任务越权/不存在（spec F8，统一消息）
 func NewTaskForbidden() *PermissionError { return &PermissionError{message: msgTaskForbidden} }
 
+// ShowError 客户端可展示的业务/校验错误（安全审查 MEDIUM：
+// 内部错误（引擎/存储/SQL 细节）经 run() 统一转通用消息，仅此类型与 PermissionError 原样展示）
+type ShowError struct {
+	message string
+}
+
+func (e *ShowError) Error() string { return e.message }
+
+// NewShowError 构造可展示错误
+func NewShowError(msg string) *ShowError { return &ShowError{message: msg} }
+
 // ToJSONRPCError 构造 -32001 JSON-RPC error 响应体（网关层写回客户端用）
 func (e *PermissionError) ToJSONRPCError(id any) mcpgo.JSONRPCError {
 	return mcpgo.JSONRPCError{

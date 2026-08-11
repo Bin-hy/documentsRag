@@ -25,10 +25,10 @@
   - F2.4 `ask`：RAG 问答。输入问题 + 可选知识库范围，返回回答与引用来源；不提供 `thinking` 参数，不暴露任何内部推理（见「不做的事」）
   - F2.5 `list_documents`：列出指定知识库（或当前凭据可访问范围）内的文档
   - F2.6 `get_task`：按任务 ID 查询入库任务状态（pending/processing/completed/failed）与错误信息；**必须**先按任务所属知识库校验当前凭据的资源权限，无权限按不存在处理（错误语义见 F5）
-- F3: 认证——MCP 请求使用 `Authorization: Bearer <API Key>` 认证（复用现有 API Key SHA-256 校验）；缺失、无效、已停用的 Key 一律拒绝，返回 **401（认证失败）**；支持 bootstrap Key
+- F3: 认证——MCP 请求使用 `Authorization: Bearer <API Key>` 认证（复用现有 API Key SHA-256 校验）；缺失、无效、已停用的 Key 一律拒绝，返回 **401（认证失败）**；bootstrap Key 不作 MCP 调用凭证、不绕过 MCP 权限（仅用于系统级 REST 管理，见 F6）
 - F4: Tool 权限控制——每个 API Key 可配置允许调用的 Tool 集合（白名单）；权限未配置（空）即无任何 MCP Tool 权限，必须显式配置后才可调用；调用未授权 Tool 返回 **403（授权失败）**
 - F5: 知识库资源权限——每个 API Key 可配置知识库范围（全部 或 指定白名单）；`retrieve`/`ask`/`list_documents`/`get_knowledge_base`/`get_task` 涉及的知识库必须在凭据可访问范围内，越权返回 **403（授权失败，不泄露存在性）**；不指定 `kb_id` 时自动使用凭据可访问的范围（未配置则无知识库可访问）
-- F6: API Key 管理扩展——API Key 新增权限配置（Tool 白名单、知识库范围），提供查看/更新权限的管理接口（仅系统级 API Key 可操作）；权限未配置即无 MCP 权限，必须显式授予；**历史 API Key 不会因 schema 迁移自动获得任何 MCP 权限**；启用/停用/删除复用现有能力
+- F6: API Key 管理扩展——API Key 新增权限配置（Tool 白名单、知识库范围），提供查看/更新权限的管理接口；查看：系统级 API Key 可操作；**更新（授予 MCP 权限）仅 bootstrap API Key 可操作**（高危操作防普通/MCP Key 自我提权）；权限未配置即无 MCP 权限，必须显式授予；**历史 API Key 不会因 schema 迁移自动获得任何 MCP 权限**；启用/停用/删除复用现有能力
 - F7: 调用审计——每次 Tool 调用记录：`api_key_id`、Tool 名、参数（截断）、结果状态、耗时、时间，供事后追溯；**绝不记录 API Key Secret（明文），仅记录 Key ID 引用**
 - F8: 异步任务状态查询——`get_task` 复用现有任务系统，且**必须执行资源权限校验**（与现有 REST `GET /api/v1/tasks/:id` 一致：先查任务、按其知识库校验凭据权限，越权按不存在处理）
 
@@ -58,7 +58,7 @@
 - AC3: 缺失 / 无效 / 已停用的 API Key 的 MCP 请求被拒绝（401）
 - AC4: 未配置 Tool 权限的 Key 无法调用任何 MCP Tool；配置白名单后，调用未授权 Tool 被拒绝（403）
 - AC5: 配置了知识库白名单的 Key，访问白名单外知识库被拒绝（403）
-- AC6: 管理接口可查看 / 更新 API Key 的 Tool 白名单与知识库范围（仅系统级 Key）；迁移后历史 Key 无任何 MCP 权限，须显式配置
+- AC6: 管理接口可查看 / 更新 API Key 的 Tool 白名单与知识库范围（查看：系统级 Key；更新：仅 bootstrap Key）；迁移后历史 Key 无任何 MCP 权限，须显式配置
 - AC7: 每次 Tool 调用产生一条审计记录，含 `api_key_id`、截断参数与结果状态，且不含任何 API Key Secret
 - AC8: `get_task` 返回正确的任务状态与错误信息；对无权限知识库的任务按不存在处理（资源权限校验生效）
 - AC9: 现有 REST API 测试全部通过（向后兼容）

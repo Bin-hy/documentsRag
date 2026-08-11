@@ -1,12 +1,14 @@
 <script setup lang="ts">
-// 系统配置管理：可修改组（LLM/Retriever/Strategy/Loader）+ 只读组（需重启生效）
-import { onMounted, reactive, ref } from 'vue'
+// 系统配置管理：可修改组（LLM/Retriever/Strategy/Loader/MCP）+ 只读组（需重启生效）
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
+import { CopyDocument } from '@element-plus/icons-vue'
 import { getConfig, updateConfig } from '../api/config'
 import type { ConfigView } from '../api/types'
 
 const loading = ref(true)
 const saving = ref(false)
+const savingMCP = ref(false)
 const isBootstrap = ref(false)
 
 // 可修改表单
@@ -22,6 +24,12 @@ const form = reactive({
     step_back: 'off' as 'off' | 'on',
     hyde: 'off' as 'off' | 'on',
     routing: 'off' as 'off' | 'auto',
+  },
+  // MCP Server（重启生效，spec F4）
+  mcp: {
+    enabled: false,
+    path: '/mcp',
+    auditParamLimit: 2000,
   },
 })
 
@@ -46,6 +54,10 @@ async function load() {
     form.vectorWeight = view.mutable.retriever.vector_weight
     form.bm25Weight = view.mutable.retriever.bm25_weight
     Object.assign(form.strategy, view.mutable.rag_strategy)
+    // MCP 分组（后端运行时值，spec F4）
+    form.mcp.enabled = view.mutable.mcp?.enabled ?? false
+    form.mcp.path = view.mutable.mcp?.path ?? '/mcp'
+    form.mcp.auditParamLimit = view.mutable.mcp?.audit_param_limit ?? 2000
     readOnly.value = view.read_only ?? []
     // bootstrap 状态由后端权威判断（middleware 校验当前 Key），不再前端猜测字符串
     isBootstrap.value = !!view.is_bootstrap
@@ -75,6 +87,48 @@ async function save() {
     ElMessage.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
   } finally {
     saving.value = false
+  }
+}
+
+// MCP Server 保存（spec F4）：MCP 参数重启生效（enabled/path 影响路由挂载）
+async function saveMCP() {
+  savingMCP.value = true
+  try {
+    await updateConfig({
+      mcp: { enabled: form.mcp.enabled, path: form.mcp.path, audit_param_limit: form.mcp.auditParamLimit },
+    })
+    ElMessage.success('MCP 配置已保存，重启服务后生效')
+  } catch (e) {
+    ElMessage.error('保存失败：' + (e instanceof Error ? e.message : String(e)))
+  } finally {
+    savingMCP.value = false
+  }
+}
+
+// 连接信息（spec F5）：endpoint 由当前请求 host + 配置 path 拼接
+const MCP_TOOLS = ['list_knowledge_bases', 'get_knowledge_base', 'retrieve', 'ask', 'list_documents', 'get_task']
+const mcpEndpoint = computed(() => `${window.location.origin}${form.mcp.path || '/mcp'}`)
+const mcpServersExample = computed(() =>
+  JSON.stringify(
+    {
+      mcpServers: {
+        binrag: {
+          url: mcpEndpoint.value,
+          headers: { Authorization: 'Bearer <API Key>' },
+        },
+      },
+    },
+    null,
+    2,
+  ),
+)
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制到剪贴板')
+  } catch {
+    ElMessage.warning('复制失败，请手动选择复制')
   }
 }
 
@@ -173,6 +227,59 @@ onMounted(load)
         </el-form>
       </div>
 
+      <!-- MCP Server 卡片（spec F4/F5）：参数编辑（重启生效）+ 连接信息 -->
+      <div class="section">
+        <h3 class="section-title">MCP Server</h3>
+        <el-form label-width="140px" label-position="left" class="mb16">
+          <el-form-item label="启用 MCP Server">
+            <el-switch v-model="form.mcp.enabled" active-text="启用" inactive-text="停用" :disabled="!isBootstrap" />
+          </el-form-item>
+          <el-form-item label="端点路径">
+            <el-input v-model="form.mcp.path" placeholder="/mcp" :disabled="!isBootstrap" class="mcp-path-input" />
+          </el-form-item>
+          <el-form-item label="审计截断长度">
+            <el-input-number v-model="form.mcp.auditParamLimit" :min="0" :step="100" :disabled="!isBootstrap" />
+          </el-form-item>
+          <el-form-item>
+            <el-alert
+              type="info"
+              :closable="false"
+              title="MCP 参数修改后需重启服务生效"
+              description="enabled 与 path 在服务启动时挂载路由；audit_param_limit 在启动时创建审计队列。保存仅持久化配置。"
+            />
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="savingMCP" :disabled="!isBootstrap" @click="saveMCP">保存 MCP 配置</el-button>
+          </el-form-item>
+        </el-form>
+
+        <div class="mcp-conn">
+          <h4 class="mcp-conn-title">连接信息</h4>
+          <div class="mcp-conn-row">
+            <span class="mcp-conn-label">Endpoint</span>
+            <code class="mcp-conn-value">{{ mcpEndpoint }}</code>
+            <el-button size="small" text :icon="CopyDocument" @click="copyText(mcpEndpoint)">复制</el-button>
+          </div>
+          <div class="mcp-conn-row">
+            <span class="mcp-conn-label">认证方式</span>
+            <code class="mcp-conn-value">Authorization: Bearer &lt;API Key&gt;</code>
+          </div>
+          <div class="mcp-conn-row mcp-conn-tools">
+            <span class="mcp-conn-label">支持 Tool</span>
+            <div class="mcp-conn-tool-list">
+              <el-tag v-for="t in MCP_TOOLS" :key="t" size="small" type="primary">{{ t }}</el-tag>
+            </div>
+          </div>
+          <div class="mcp-conn-example">
+            <div class="mcp-conn-example-head">
+              <span class="mcp-conn-label">客户端配置示例</span>
+              <el-button size="small" text :icon="CopyDocument" @click="copyText(mcpServersExample)">复制</el-button>
+            </div>
+            <pre class="mcp-conn-pre">{{ mcpServersExample }}</pre>
+          </div>
+        </div>
+      </div>
+
       <div class="section">
         <h3 class="section-title">启动级配置（需重启生效）</h3>
         <el-table :data="readOnly" size="small">
@@ -236,5 +343,77 @@ onMounted(load)
 .weight-note {
   white-space: nowrap;
   font-size: 12px;
+}
+
+.mcp-path-input {
+  max-width: 320px;
+}
+
+.mcp-conn {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--br-border);
+}
+
+.mcp-conn-title {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mcp-conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mcp-conn-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--br-text-secondary, #666);
+}
+
+.mcp-conn-value {
+  padding: 4px 8px;
+  background: var(--br-bg-inset);
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-sm, 6px);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.mcp-conn-tools {
+  align-items: flex-start;
+}
+
+.mcp-conn-tool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.mcp-conn-example {
+  margin-top: 8px;
+}
+
+.mcp-conn-example-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mcp-conn-pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--br-bg-inset);
+  border: 1px solid var(--br-border);
+  border-radius: var(--br-radius-sm, 6px);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  user-select: all;
 }
 </style>

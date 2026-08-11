@@ -121,3 +121,29 @@ func TestAtomicWriteYAML(t *testing.T) {
 		t.Errorf("文件应有内容: %v", err)
 	}
 }
+
+// MCP path 校验：空 = 默认；合法 / 开头通过；非法（无 / 前缀）报错
+func TestValidateMCPPath(t *testing.T) {
+	base := func() *Config {
+		c := &Config{}
+		c.applyDefaults()
+		return c
+	}
+
+	// 空 path（默认 /mcp）通过
+	if err := ValidateConfig(base()); err != nil {
+		t.Errorf("默认配置不应报错: %v", err)
+	}
+	// 合法 path
+	c := base()
+	c.Server.MCP.Path = "/custom-mcp"
+	if err := ValidateConfig(c); err != nil {
+		t.Errorf("/custom-mcp 应通过: %v", err)
+	}
+	// 非法 path
+	c = base()
+	c.Server.MCP.Path = "mcp"
+	if err := ValidateConfig(c); err == nil {
+		t.Error("不以 / 开头的 path 应报错")
+	}
+}

@@ -126,6 +126,16 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	v1.POST("/api-keys/:id/toggle", h.ToggleAPIKey)
 	v1.PUT("/api-keys/:id/permissions", h.UpdateAPIKeyPermissions)
 
+	// 我的 MCP（用户自助，JWT 会话；spec F8/F10）
+	mcpMy := v1.Group("mcp/my")
+	{
+		mcpMy.GET("/status", h.myMCPStatus)
+		mcpMy.POST("/key", h.myMCPCreateKey)
+		mcpMy.POST("/key/toggle", h.myMCPToggleKey)
+		mcpMy.DELETE("/key", h.myMCPDeleteKey)
+		mcpMy.PUT("/key/permissions", h.myMCPUpdatePermissions)
+	}
+
 	return r
 }
 

@@ -2,8 +2,10 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
@@ -59,6 +61,14 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return // HTTP 401 已写
 	}
 
+	// 用户 MCP 凭据：按 owner 解析实际知识库范围（spec F9）——
+	// scope=all → 仅自己的知识库；allowlist → 白名单 ∩ 自己的知识库；无 → 空
+	if kc.OwnerID != "" {
+		if err := resolveOwnerScope(r.Context(), g.st, kc); err != nil {
+			slog.Warn("MCP owner 知识库范围解析失败", "key", kc.KeyID, "err", err)
+		}
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "读取请求体失败", http.StatusBadRequest)
@@ -72,6 +82,43 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	g.next.ServeHTTP(w, r.WithContext(ctxWithKeyCtx(r.Context(), kc)))
+}
+
+// resolveOwnerScope 把用户凭据的配置范围解析为实际可访问范围（与用户归属知识库取交集）。
+// 系统级 Key（OwnerID 空）不进入此逻辑（行为不变，D7）。
+func resolveOwnerScope(ctx context.Context, st store.Store, kc *keyCtx) error {
+	ownerKBs, err := st.ListKBsByOwner(ctx, kc.OwnerID)
+	if err != nil {
+		return err
+	}
+	ownerIDs := make([]string, 0, len(ownerKBs))
+	for _, kb := range ownerKBs {
+		ownerIDs = append(ownerIDs, kb.ID)
+	}
+	switch {
+	case kc.Scope.All:
+		kc.Scope = KBPermission{IDs: ownerIDs} // 用户 all = 自己的知识库
+	case len(kc.Scope.IDs) > 0:
+		kc.Scope = KBPermission{IDs: intersect(kc.Scope.IDs, ownerIDs)} // 白名单 ∩ 自己的
+	default:
+		kc.Scope = KBPermission{} // 无范围
+	}
+	return nil
+}
+
+// intersect 返回 a 与 b 的交集（保序，按 a）
+func intersect(a, b []string) []string {
+	set := make(map[string]struct{}, len(b))
+	for _, v := range b {
+		set[v] = struct{}{}
+	}
+	out := make([]string, 0, len(a))
+	for _, v := range a {
+		if _, ok := set[v]; ok {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // authorize 对 tools/call 做授权检查（Tool 白名单 + 知识库/任务资源权限）。
