@@ -28,6 +28,9 @@ export default defineConfig({
     logo: '⚡',
     siteTitle: 'BinRag',
 
+    // 右上角 GitHub 仓库跳转
+    socialLinks: [{ icon: 'github', link: 'https://github.com/Bin-hy/documentsRag', ariaLabel: 'GitHub 仓库' }],
+
     nav: [
       { text: '快速开始', link: '/guide/getting-started' },
       { text: '核心概念', link: '/guide/concepts' },
