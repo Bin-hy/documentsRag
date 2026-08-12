@@ -46,6 +46,10 @@ oidc:
 
 启用后：`public_url` 必填；OIDC Provider 启动时执行 discovery（失败则启动失败）。
 
+![OIDC 登录界面](../assets/images/oidc-login.png)
+
+<p class="shot-caption">三方登录入口：GitHub / 企业 OIDC 一键授权，登录后签发会话 JWT</p>
+
 ## 会话与用户体系
 
 - 登录用户通过 `/api/v1/auth/providers` 获取 Provider 列表，跳转授权后回调，`/exchange` 兑换会话 JWT

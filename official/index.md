@@ -67,6 +67,24 @@ hero:
   { title: '浏览器访问 8085', desc: 'http://localhost:8085 — 输入 API Key 登录使用（免编译可拉取 ghcr.io 镜像）' },
 ]" />
 
+# 运行截图
+
+直观感受 BinRag 的实际运行界面——从知识库管理、文档异步入库，到流式问答与检索调优：
+
+![BinRag 系统首页 — 知识库总览与问答入口](./assets/images/homePage.png)
+
+<div class="screenshot-grid">
+
+![流式对话问答界面（引用来源先行、正文增量返回）](./assets/images/对话.png)
+
+![知识库文档上传与异步入库](./assets/images/知识库文档上传.png)
+
+![RAG 检索优化调节（系统配置）](./assets/images/支持rag优化调节.png)
+
+</div>
+
+各界面背后的原理与配置，见 [核心概念](/guide/concepts)、[MCP Server](/guide/mcp) 与 [登录认证](/guide/auth)。
+
 ---
 
 ## 技术栈

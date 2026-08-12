@@ -62,3 +62,54 @@
   border-radius: 2px;
   background: linear-gradient(90deg, #4f5bd5, #a855f7);
 }
+
+/* ===== 运行截图 ===== */
+
+/* 文档正文中的截图：圆角边框 + 阴影，明暗适配 */
+.vp-doc img {
+  border: 1px solid rgba(127, 127, 127, 0.28);
+  border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
+}
+
+.dark .vp-doc img {
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* 截图图注 */
+.shot-caption {
+  margin: 6px 0 24px;
+  font-size: 13px;
+  color: var(--vp-c-text-2);
+  text-align: center;
+}
+
+/* 首页运行截图画廊 */
+.screenshot-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin: 16px 0 8px;
+}
+
+.screenshot-grid p {
+  margin: 0;
+  line-height: 0;
+}
+
+.screenshot-grid img {
+  width: 100%;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.screenshot-grid img:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 30px rgba(79, 91, 213, 0.3);
+}
+
+@media (max-width: 720px) {
+  .screenshot-grid {
+    grid-template-columns: 1fr;
+  }
+}

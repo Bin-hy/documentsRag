@@ -68,6 +68,10 @@ server:
 - **权限配置**：Tool 白名单（6 个）+ 知识库范围（可选项 = 自己的知识库）
 - **连接信息**：endpoint 与 `mcpServers` 客户端示例，一键复制
 
+![MCP Server 管理界面](../assets/images/mcp-server.png)
+
+<p class="shot-caption">「我的 MCP」：自助生成绑定用户的凭据，配置 Tool 白名单与知识库范围</p>
+
 ## REST 管理接口
 
 | 方法 | 路径 | 说明 |

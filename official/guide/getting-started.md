@@ -69,6 +69,10 @@ curl -I http://localhost:8085/swagger/index.html   # 返回 200 即服务就绪
 
 浏览器打开 `http://localhost:8085` ，输入 `bootstrap_api_key` 登录使用（完整 API 文档见 `/swagger/`）。
 
+![BinRag 系统首页 — 知识库总览与问答入口](../assets/images/homePage.png)
+
+<p class="shot-caption">登录后的系统首页：知识库卡片、文档入口与全局问答框一目了然</p>
+
 ### 4. 免编译部署（可选）
 
 镜像由 GitHub Actions（`.github/workflows/docker-publish.yml`）在 main 分支与 `v*` 标签自动构建并推送到 GitHub Container Registry（`ghcr.io/bin-hy/documentsrag`），无需本地构建：
