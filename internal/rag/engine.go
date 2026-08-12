@@ -392,8 +392,10 @@ func (e *RAGEngine) runToolLoop(ctx context.Context, messages []llm.Message, o A
 			return messages, nil
 		}
 
-		// OpenAI 标准格式：一条 assistant 消息携带本轮全部 tool_calls，再逐条 tool 结果
-		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls}
+		// OpenAI 标准格式：一条 assistant 消息携带本轮全部 tool_calls，再逐条 tool 结果。
+		// DeepSeek thinking 模型：带 tool_calls 的 assistant 消息必须原样回传
+		// reasoning_content（思维链），否则 API 报 400 "reasoning_content must be passed back"。
+		assistantMsg := llm.Message{Role: llm.RoleAssistant, ToolCalls: resp.ToolCalls, ReasoningContent: resp.ReasoningContent}
 		messages = append(messages, assistantMsg)
 
 		for _, tc := range resp.ToolCalls {

@@ -33,11 +33,12 @@ type ToolCall struct {
 
 // Message 对话消息
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content"`
-	Sources    string     `json:"sources,omitempty"`      // 引用来源 JSON 数组字符串（历史持久化用，空 = 无引用）
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`   // assistant 消息的工具调用列表
-	ToolCallID string     `json:"tool_call_id,omitempty"` // tool 结果消息回引的工具调用 ID
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"` // DeepSeek thinking 思维链：thinking 模式下 assistant 消息（含 tool_calls）回传时必须原样附带，否则 API 400
+	Sources          string     `json:"sources,omitempty"`           // 引用来源 JSON 数组字符串（历史持久化用，空 = 无引用）
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`        // assistant 消息的工具调用列表
+	ToolCallID       string     `json:"tool_call_id,omitempty"`      // tool 结果消息回引的工具调用 ID
 }
 
 // FunctionTool OpenAI 风格 function tool 定义（tools 请求参数）
@@ -108,8 +109,9 @@ type LLM interface {
 
 // ToolResponse 带工具调用的生成结果
 type ToolResponse struct {
-	Content   string
-	ToolCalls []ToolCall // 模型请求的工具调用（空 = 未请求工具，Content 为最终回答）
+	Content          string
+	ReasoningContent string     // DeepSeek thinking 思维链（后续请求需原样回传，否则 API 400）
+	ToolCalls        []ToolCall // 模型请求的工具调用（空 = 未请求工具，Content 为最终回答）
 }
 
 type openaiLLM struct {
@@ -283,7 +285,7 @@ func (l *openaiLLM) doGenerateTool(ctx context.Context, messages []Message, tool
 	}
 
 	msg := chatResp.Choices[0].Message
-	out := &ToolResponse{Content: msg.Content}
+	out := &ToolResponse{Content: msg.Content, ReasoningContent: msg.ReasoningContent}
 	for _, tc := range msg.ToolCalls {
 		out.ToolCalls = append(out.ToolCalls, ToolCall{
 			ID:        tc.ID,
@@ -360,6 +362,9 @@ func toOpenAIMessages(messages []Message) []map[string]any {
 	out := make([]map[string]any, 0, len(messages))
 	for _, m := range messages {
 		om := map[string]any{"role": m.Role, "content": m.Content}
+		if m.ReasoningContent != "" {
+			om["reasoning_content"] = m.ReasoningContent
+		}
 		if len(m.ToolCalls) > 0 {
 			tcs := make([]map[string]any, 0, len(m.ToolCalls))
 			for _, tc := range m.ToolCalls {
@@ -396,8 +401,9 @@ type chatToolCall struct {
 type chatCompletionResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string         `json:"content"`
-			ToolCalls []chatToolCall `json:"tool_calls"`
+			Content          string         `json:"content"`
+			ReasoningContent string         `json:"reasoning_content"` // DeepSeek thinking 思维链
+			ToolCalls        []chatToolCall `json:"tool_calls"`
 		} `json:"message"`
 		Delta struct {
 			Content   string             `json:"content"`
