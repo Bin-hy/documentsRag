@@ -71,8 +71,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
 # ---------- 阶段 3：运行镜像 ----------
 FROM alpine:3.20
 
-# CA 证书（访问外部模型/Embedding API 需要）+ 时区数据；固定 uid 1000 便于挂载卷授权
-RUN apk add --no-cache ca-certificates tzdata \
+# CA 证书（访问外部模型/Embedding API 需要）+ 时区数据 + ffmpeg（视频抽帧运行时依赖，spec F5）；
+# 固定 uid 1000 便于挂载卷授权
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
     && addgroup -S -g 1000 binrag \
     && adduser -S -u 1000 -G binrag binrag
 

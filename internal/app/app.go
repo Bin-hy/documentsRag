@@ -22,6 +22,7 @@ import (
 	"github.com/Bin-hy/bin-rag/internal/llm"
 	"github.com/Bin-hy/bin-rag/internal/loader"
 	"github.com/Bin-hy/bin-rag/internal/mcp"
+	"github.com/Bin-hy/bin-rag/internal/multimedia"
 	"github.com/Bin-hy/bin-rag/internal/pipeline"
 	"github.com/Bin-hy/bin-rag/internal/rag"
 	"github.com/Bin-hy/bin-rag/internal/reranker"
@@ -40,7 +41,6 @@ type App struct {
 	st     store.Store
 	vs     vectorstore.VectorStore
 	bm25   retriever.BM25Index
-	engine rag.Engine
 	worker task.WorkerPool
 
 	// 运行时组件（可热重载）：components 原子指针（指针共享，rebuild 闭包与 App 同一实例），cfgMgr 配置管理器
@@ -80,7 +80,12 @@ func New(cfg *config.Config) (*App, error) {
 	}
 
 	// 基础设施
-	emb := embedding.NewEmbedder(cfg.Embedder)
+	emb, err := embedding.NewEmbedder(cfg.Embedder)
+	if err != nil {
+		cancel()
+		st.Close()
+		return nil, fmt.Errorf("初始化 Embedder 失败: %w", err)
+	}
 	vs, err := vectorstore.NewQdrantStore(cfg.VectorStore)
 	if err != nil {
 		cancel()
@@ -95,8 +100,11 @@ func New(cfg *config.Config) (*App, error) {
 	}
 	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer())
 
+	// 文档加载注册表（含多媒体能力装配，spec F6）
+	reg := buildLoaderRegistry(*cfg)
+
 	pipe := pipeline.NewPipeline(
-		loader.NewLoader(),
+		loader.NewLoaderWithRegistry(reg),
 		chunker.NewChunker(nil),
 		emb,
 		vs,
@@ -146,12 +154,7 @@ func New(cfg *config.Config) (*App, error) {
 		LoaderCfg: cfg.Loader,
 		CfgMgr:    cfgMgr,
 		Rebuild: func(newCfg *config.Config) error {
-			rt, err := BuildRuntime(newCfg, vs, bm25, historyAdapter)
-			if err != nil {
-				return fmt.Errorf("构建运行时组件失败: %w", err)
-			}
-			components.Store(rt) // 试构建成功后替换（ConfigManager 原子替换后新请求用新组件）
-			return nil
+			return rebuildComponents(newCfg, vs, bm25, historyAdapter, components)
 		},
 		Engine: func() rag.Engine {
 			rt := components.Load()
@@ -164,11 +167,12 @@ func New(cfg *config.Config) (*App, error) {
 		Auth:     authMgr,
 		VS:       vs,
 		BM25:     bm25,
-		Registry: loader.NewDefaultRegistry(),
+		Registry: reg,
 		History:  st.HistoryStore(),
 	})
 	if err := webui.Register(router); err != nil {
 		cancel()
+		vs.Close()
 		st.Close()
 		worker.Shutdown()
 		return nil, fmt.Errorf("挂载前端静态资源失败: %w", err)
@@ -207,7 +211,6 @@ func New(cfg *config.Config) (*App, error) {
 		st:             st,
 		vs:             vs,
 		bm25:           bm25,
-		engine:         rtComp.Engine,
 		worker:         worker,
 		historyAdapter: historyAdapter,
 		components:     components,
@@ -217,6 +220,35 @@ func New(cfg *config.Config) (*App, error) {
 		cancel:         cancel,
 	}
 	return app, nil
+}
+
+// buildLoaderRegistry 构建含多媒体能力的文档加载注册表（spec F6）。
+// 默认注册表已含 nil 能力的多媒体 parser（未配置时上传被明确拒绝），
+// 配置就绪后用真实 provider 覆盖注册同名扩展名；pipeline 与 API 共用同一注册表。
+func buildLoaderRegistry(cfg config.Config) loader.Registry {
+	reg := loader.NewDefaultRegistry()
+
+	vision := multimedia.NewVisionProvider(cfg.Multimedia.Vision)
+	speech := multimedia.NewSpeechProvider(cfg.Multimedia.Speech)
+	strategy := multimedia.NewFrameStrategy(cfg.Multimedia.Video)
+	prober := multimedia.NewMediaProber()
+	audioExt := multimedia.NewAudioExtractor()
+	frameCfg := loader.FrameStrategyConfig{
+		Mode:          cfg.Multimedia.Video.FrameStrategy,
+		IntervalSec:   cfg.Multimedia.Video.FrameIntervalSec,
+		SampleFPS:     cfg.Multimedia.Video.Scene.SampleFPS,
+		SimThreshold:  cfg.Multimedia.Video.Scene.SimilarityThreshold,
+		MinSceneDurMs: int64(cfg.Multimedia.Video.Scene.MinSceneDurationMs),
+	}
+	if vision != nil {
+		reg.Register(loader.NewImageParser(vision))
+		// strategy 可能为 nil（scene 缺 vision_embedding），由 CheckCapabilities 报配置错误
+		reg.Register(loader.NewVideoParser(vision, speech, strategy, prober, audioExt, frameCfg))
+	}
+	if speech != nil {
+		reg.Register(loader.NewAudioParser(speech))
+	}
+	return reg
 }
 
 // cfgFile 返回配置文件路径（复用 main 的 -c/--config 解析；空则环境变量或默认）
@@ -329,7 +361,10 @@ type EvalDeps struct {
 func AssembleEvalDeps(cfg *config.Config) (*EvalDeps, error) {
 	ctx := context.Background()
 
-	emb := embedding.NewEmbedder(cfg.Embedder)
+	emb, err := embedding.NewEmbedder(cfg.Embedder)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 Embedder 失败: %w", err)
+	}
 	vs, err := vectorstore.NewQdrantStore(cfg.VectorStore)
 	if err != nil {
 		return nil, fmt.Errorf("初始化向量存储失败: %w", err)

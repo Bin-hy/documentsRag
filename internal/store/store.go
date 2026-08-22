@@ -62,14 +62,15 @@ type Document struct {
 
 // Task 入库任务
 type Task struct {
-	ID           string
-	KBID         string
-	DocumentID   string
-	Status       string // pending / processing / completed / failed
-	RetryCount   int
-	ErrorMessage string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ID             string
+	KBID           string
+	DocumentID     string
+	Status         string // pending / processing / completed / failed
+	RetryCount     int
+	ErrorMessage   string
+	WarningMessage string // 非阻断告警（如视频音轨降级），空 = 无
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // APIKey 访问密钥（只存 hash）

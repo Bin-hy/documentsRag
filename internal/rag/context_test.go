@@ -122,3 +122,43 @@ func TestBuildContext_SourceType(t *testing.T) {
 		t.Errorf("无标记时 SourceType = %q, want 空", sources[2].SourceType)
 	}
 }
+
+// 时间戳贯通：Source 从 Metadata 提取 start_ms/end_ms（spec F7，兼容 float64）
+func TestBuildContext_Timestamp(t *testing.T) {
+	chunks := []retriever.RetrieveResult{
+		{ID: "v1", Content: "画面", Score: 0.9, Metadata: map[string]any{
+			"filename": "demo.mp4", "source_type": "video",
+			"start_ms": float64(10000), "end_ms": float64(20000),
+		}},
+	}
+	_, sources := buildContext(chunks, 100000, 10)
+	if len(sources) != 1 {
+		t.Fatalf("sources 数量错误: %d", len(sources))
+	}
+	s := sources[0]
+	if s.SourceType != "video" || s.StartMs != 10000 || s.EndMs != 20000 {
+		t.Errorf("时间戳提取错误: %+v", s)
+	}
+}
+
+// 定位字段贯通：Source 从 Metadata 提取 page_number/anchor
+func TestBuildContext_PageAnchor(t *testing.T) {
+	chunks := []retriever.RetrieveResult{
+		{ID: "p1", Content: "PDF 内容", Score: 0.8, Metadata: map[string]any{
+			"filename": "a.pdf", "page_number": float64(3),
+		}},
+		{ID: "m1", Content: "Markdown 内容", Score: 0.7, Metadata: map[string]any{
+			"filename": "a.md", "anchor": "模块设计",
+		}},
+	}
+	_, sources := buildContext(chunks, 100000, 10)
+	if len(sources) != 2 {
+		t.Fatalf("sources 数量错误: %d", len(sources))
+	}
+	if sources[0].PageNumber != 3 {
+		t.Errorf("PDF PageNumber = %d, want 3", sources[0].PageNumber)
+	}
+	if sources[1].Anchor != "模块设计" {
+		t.Errorf("Markdown Anchor = %q, want 模块设计", sources[1].Anchor)
+	}
+}

@@ -43,6 +43,12 @@ func (h *handler) GetChunk(c *gin.Context) {
 	content, _ := payload["content"].(string)
 	documentID, _ := payload["document_id"].(string)
 	filename, _ := payload["filename"].(string)
+	sourceType, _ := payload["source_type"].(string)
+	startMs := payloadInt(payload, "start_ms")
+	endMs := payloadInt(payload, "end_ms")
+	pageNumber := payloadInt(payload, "page_number")
+	heading, _ := payload["heading"].(string)
+	anchor, _ := payload["anchor"].(string)
 	if content == "" {
 		Fail(c, CodeNotFound, "chunk 无可用内容")
 		return
@@ -69,5 +75,24 @@ func (h *handler) GetChunk(c *gin.Context) {
 		"content":     content,
 		"document_id": documentID,
 		"filename":    filename,
+		"source_type": sourceType,
+		"start_ms":    startMs,
+		"end_ms":      endMs,
+		"page_number": pageNumber,
+		"heading":     heading,
+		"anchor":      anchor,
 	})
+}
+
+// payloadInt 从向量库 payload 安全提取 int64（兼容 float64/int64）
+func payloadInt(payload map[string]any, key string) int64 {
+	switch v := payload[key].(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	}
+	return 0
 }

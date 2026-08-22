@@ -1,6 +1,6 @@
 // 文档 REST API（文档状态即入库任务状态）
 import { request } from './client'
-import type { Document, UploadResult } from './types'
+import type { Document, SupportedType, UploadResult } from './types'
 
 export function listDocuments(kbId: string): Promise<Document[]> {
   return request<Document[]>({
@@ -8,6 +8,18 @@ export function listDocuments(kbId: string): Promise<Document[]> {
     url: '/api/v1/documents',
     params: { kb_id: kbId },
   })
+}
+
+export function getSupportedTypes(): Promise<SupportedType[]> {
+  return request<SupportedType[]>({
+    method: 'GET',
+    url: '/api/v1/documents/supported-types',
+  })
+}
+
+/** 原文文件访问 URL（供 PDF/视频/音频/Markdown 阅读器加载） */
+export function rawDocumentUrl(documentId: string): string {
+  return `/api/v1/documents/${encodeURIComponent(documentId)}/raw`
 }
 
 export function uploadDocument(kbId: string, file: File): Promise<UploadResult> {

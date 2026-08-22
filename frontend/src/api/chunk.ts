@@ -6,6 +6,12 @@ export interface ChunkDetail {
   content: string
   document_id: string
   filename: string
+  source_type?: string
+  start_ms?: number
+  end_ms?: number
+  page_number?: number
+  heading?: string
+  anchor?: string
 }
 
 export function getChunk(id: string): Promise<ChunkDetail> {

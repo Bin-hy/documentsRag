@@ -9,8 +9,11 @@ import (
 	"errors"
 	"io"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -338,6 +341,7 @@ func (f *fakeVS) Delete(ctx context.Context, ids []string) error {
 	f.deleted = append(f.deleted, ids)
 	return nil
 }
+func (f *fakeVS) DeleteByFilter(ctx context.Context, filter map[string]any) error { return nil }
 func (f *fakeVS) Get(ctx context.Context, id string) (map[string]any, bool, error) {
 	if f.payloads != nil {
 		if p, ok := f.payloads[id]; ok {
@@ -353,8 +357,11 @@ type fakeBM25 struct {
 	removed []string
 }
 
-func (f *fakeBM25) Add(id string, content string, kbID string)           {}
+func (f *fakeBM25) Add(id string, content string, kbID string) {}
+func (f *fakeBM25) AddWithDocID(id string, content string, kbID string, docID string) {
+}
 func (f *fakeBM25) Remove(id string)                                     { f.removed = append(f.removed, id) }
+func (f *fakeBM25) RemoveByDoc(docID string)                             {}
 func (f *fakeBM25) Search(query string, topK int) []retriever.BM25Result { return nil }
 func (f *fakeBM25) SearchFiltered(query string, topK int, kbID string) []retriever.BM25Result {
 	return nil
@@ -376,6 +383,20 @@ func (f *fakeRegistry) Resolve(info loader.FileInfo) (loader.Parser, error) {
 		return fakeParser{}, nil
 	}
 	return nil, &loader.ErrUnsupportedFormat{Filename: info.Filename, MIMEType: info.MIMEType}
+}
+func (f *fakeRegistry) Support(info loader.FileInfo) loader.SupportResult {
+	if _, err := f.Resolve(info); err != nil {
+		return loader.SupportResult{Supported: false, Reason: err.Error()}
+	}
+	return loader.SupportResult{Supported: true}
+}
+func (f *fakeRegistry) SupportedTypes() []loader.SupportedType {
+	types := make([]loader.SupportedType, 0, len(f.supported))
+	for ext := range f.supported {
+		types = append(types, loader.SupportedType{Ext: ext, Category: "text", Supported: true})
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i].Ext < types[j].Ext })
+	return types
 }
 
 type fakeParser struct{}
@@ -629,6 +650,38 @@ func TestUploadUnsupportedFormat(t *testing.T) {
 
 	if w.Code != 400 {
 		t.Fatalf("不支持格式应 400，实际 %d %s", w.Code, w.Body.String())
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("不支持的文件格式")) {
+		t.Errorf("不支持格式的提示应可读，实际 %s", w.Body.String())
+	}
+}
+
+// supported-types 端点：返回当前注册表各扩展名支持状态（文本支持、未配置能力不支持）
+func TestSupportedTypesEndpoint(t *testing.T) {
+	env := newTestEnvWithRegistry(t, loader.NewDefaultRegistry(), config.LoaderConfig{})
+
+	w := doReq(t, env.router, "GET", "/api/v1/documents/supported-types", nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("supported-types 应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Code int                    `json:"code"`
+		Data []loader.SupportedType `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("解析响应失败: %v", err)
+	}
+
+	byExt := map[string]loader.SupportedType{}
+	for _, st := range resp.Data {
+		byExt[st.Ext] = st
+	}
+	if txt, ok := byExt[".txt"]; !ok || !txt.Supported {
+		t.Errorf(".txt 应在列表中且 supported=true，实际 %+v", txt)
+	}
+	if mp3, ok := byExt[".mp3"]; !ok || mp3.Supported || !strings.Contains(mp3.Reason, "speech") {
+		t.Errorf(".mp3 应 supported=false 且 reason 含 speech，实际 %+v", mp3)
 	}
 }
 
@@ -1370,5 +1423,290 @@ func TestChatEnhancements(t *testing.T) {
 	}
 	if first["available"] != false {
 		t.Errorf("无 cfgMgr 时 available 应为 false: %+v", first)
+	}
+}
+
+// mockVision 实现 loader.VisionProvider（api 层测试用）
+type mockVision struct{ text string }
+
+func (m *mockVision) Describe(_ context.Context, _ []byte, _ loader.VisionOptions) (string, error) {
+	return m.text, nil
+}
+
+// newTestEnvWithRegistry 构建带指定 loader 注册表与 LoaderCfg 的测试环境
+func newTestEnvWithRegistry(t *testing.T, reg loader.Registry, loaderCfg config.LoaderConfig) *testEnv {
+	t.Helper()
+	fs := newFakeStore()
+	fs.keys["key-1"] = store.APIKey{ID: "key-1", Name: "测试", KeyHash: keyHash(testAPIKey), Enabled: true}
+
+	fe := &fakeEngine{answer: "回答"}
+	fv := &fakeVS{}
+	fb := &fakeBM25{}
+	fh := &fakeHistoryStore{msgs: make(map[string][]llm.Message)}
+
+	cfg := config.ServerConfig{
+		Port: 8080, FileStorageDir: t.TempDir(), UploadMaxSizeMB: 10,
+		WorkerCount: 2, TaskMaxRetries: 3, AuthEnabled: true,
+	}
+
+	router := NewRouter(Dependencies{
+		Config:    cfg,
+		LoaderCfg: loaderCfg,
+		Store:     fs,
+		Auth:      testAuthManager(),
+		VS:        fv,
+		BM25:      fb,
+		Registry:  reg,
+		Engine:    func() rag.Engine { return fe },
+		History:   fh,
+	})
+	return &testEnv{router: router, store: fs, engine: fe, vs: fv, bm25: fb, history: fh}
+}
+
+// uploadFile 新建知识库并上传 multipart 文件，返回响应与新知识库 ID
+func uploadFile(t *testing.T, env *testEnv, filename, content string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	doReq(t, env.router, "POST", "/api/v1/knowledge-bases", map[string]string{"name": "kb"}, testAPIKey)
+	env.store.mu.Lock()
+	var kbID string
+	for id := range env.store.kbs {
+		kbID = id
+		break
+	}
+	env.store.mu.Unlock()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", filename)
+	_, _ = fw.Write([]byte(content))
+	mw.Close()
+
+	req := httptest.NewRequest("POST", "/api/v1/documents/upload?kb_id="+kbID, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	return w, kbID
+}
+
+// AC5: 未配置多媒体能力 → 400 明确配置缺失（默认注册表 nil 能力兜底）
+func TestUploadMultimediaCapabilityMissing(t *testing.T) {
+	env := newTestEnvWithRegistry(t, loader.NewDefaultRegistry(), config.LoaderConfig{})
+
+	w, _ := uploadFile(t, env, "截图.png", "fake-png")
+	if w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("multimedia.vision 未配置")) {
+		t.Fatalf("png 未配置 vision 应 400 且提示配置缺失，实际 %d %s", w.Code, w.Body.String())
+	}
+	// 确认无脏数据：无文档记录产生
+	env.store.mu.Lock()
+	n := len(env.store.docs)
+	env.store.mu.Unlock()
+	if n != 0 {
+		t.Errorf("能力缺失拒绝后不应产生文档记录，实际 %d 条", n)
+	}
+
+	w, _ = uploadFile(t, env, "会议.mp3", "fake-mp3")
+	if w.Code != 400 || !bytes.Contains(w.Body.Bytes(), []byte("multimedia.speech 未配置")) {
+		t.Fatalf("mp3 未配置 speech 应 400 且提示配置缺失，实际 %d %s", w.Code, w.Body.String())
+	}
+}
+
+// AC1/AC2: 配置 vision 后图片上传成功（mock provider），预检不真实解析
+func TestUploadMultimediaImageSuccess(t *testing.T) {
+	reg := loader.NewDefaultRegistry()
+	reg.Register(loader.NewImageParser(&mockVision{text: "一张架构图"}))
+	env := newTestEnvWithRegistry(t, reg, config.LoaderConfig{MinReadableChars: 20})
+
+	w, _ := uploadFile(t, env, "架构图.png", "fake-png-bytes")
+	if w.Code != 200 {
+		t.Fatalf("配置 vision 后图片上传应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+}
+
+// countingParser 包装多媒体 parser，统计 Parse 调用次数（验证预检不真实解析，plan D3）
+type countingParser struct {
+	loader.Parser
+	parseCalls int
+}
+
+func (c *countingParser) Parse(ctx context.Context, r io.Reader, opts loader.LoadOptions) (*loader.LoadResult, error) {
+	c.parseCalls++
+	return c.Parser.Parse(ctx, r, opts)
+}
+
+func (c *countingParser) CheckCapabilities() error {
+	if checker, ok := c.Parser.(loader.MediaCapabilityChecker); ok {
+		return checker.CheckCapabilities()
+	}
+	return nil
+}
+
+// 集成：上传预检对多媒体只做能力检查、不调用 Parse（避免双次模型调用）
+func TestUploadMultimediaPrecheckSkipsParse(t *testing.T) {
+	cp := &countingParser{Parser: loader.NewImageParser(&mockVision{text: "一张架构图"})}
+	reg := loader.NewRegistry()
+	reg.Register(cp)
+
+	env := newTestEnvWithRegistry(t, reg, config.LoaderConfig{MinReadableChars: 20})
+	w, _ := uploadFile(t, env, "架构图.png", "fake-png-bytes")
+	if w.Code != 200 {
+		t.Fatalf("图片上传应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+	if cp.parseCalls != 0 {
+		t.Errorf("上传预检不应调用 Parse（真实解析留待入库阶段），实际调用 %d 次", cp.parseCalls)
+	}
+}
+
+// F7: chunk 详情返回 source_type/start_ms/end_ms（视频定位锚点）
+func TestGetChunkReturnsTimestamp(t *testing.T) {
+	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
+	env.store.docs["doc-1"] = store.Document{ID: "doc-1", KBID: "kb-1", Filename: "v.mp4", Status: store.DocStatusCompleted}
+
+	chunkID := "11111111-2222-3333-4444-555555555555"
+	env.vs.payloads = map[string]map[string]any{
+		chunkID: {
+			"content":     "画面描述",
+			"document_id": "doc-1",
+			"filename":    "v.mp4",
+			"source_type": "video",
+			"start_ms":    float64(1000),
+			"end_ms":      float64(2000),
+		},
+	}
+
+	w := doReq(t, env.router, "GET", "/api/v1/chunks/"+chunkID, nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("GetChunk 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+	resp := decodeResp(t, w)
+	data, ok := resp.Data.(map[string]any)
+	if !ok {
+		t.Fatalf("响应数据错误: %+v", resp.Data)
+	}
+	if data["source_type"] != "video" || data["start_ms"] != float64(1000) || data["end_ms"] != float64(2000) {
+		t.Errorf("时间戳未返回: %+v", data)
+	}
+}
+
+// F8: 视频流式访问——Range 返回 206、越权/不存在 404、文本格式拒绝
+func TestStreamVideo(t *testing.T) {
+	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
+
+	// 真实视频文件
+	dir := t.TempDir()
+	videoPath := dir + "/demo.mp4"
+	_ = os.WriteFile(videoPath, []byte("fake-mp4-bytes-for-range-test"), 0o644)
+	env.store.docs["11111111-2222-3333-4444-555555555555"] = store.Document{ID: "11111111-2222-3333-4444-555555555555", KBID: "kb-1", Filename: "demo.mp4", Format: ".mp4", FilePath: videoPath, Status: store.DocStatusCompleted}
+
+	// Range 请求 → 206
+	req := httptest.NewRequest("GET", "/api/v1/videos/11111111-2222-3333-4444-555555555555/stream", nil)
+	req.Header.Set("Range", "bytes=0-4")
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("Range 请求应 206，实际 %d %s", w.Code, w.Body.String())
+	}
+	if w.Body.String() != "fake-" {
+		t.Errorf("Range 返回内容错误: %q", w.Body.String())
+	}
+
+	// 不存在 → 404
+	req = httptest.NewRequest("GET", "/api/v1/videos/22222222-3333-4444-5555-666666666666/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != 404 {
+		t.Errorf("不存在应 404，实际 %d", w.Code)
+	}
+
+	// 文本格式 → 400
+	env.store.docs["44444444-3333-2222-1111-666666666666"] = store.Document{ID: "44444444-3333-2222-1111-666666666666", KBID: "kb-1", Filename: "a.txt", Format: ".txt", FilePath: dir + "/a.txt", Status: store.DocStatusCompleted}
+	_ = os.WriteFile(dir+"/a.txt", []byte("text"), 0o644)
+	req = httptest.NewRequest("GET", "/api/v1/videos/44444444-3333-2222-1111-666666666666/stream", nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != 400 {
+		t.Errorf("文本格式应 400，实际 %d", w.Code)
+	}
+}
+
+// 原文访问接口：PDF 返回 200 + 正确 MIME + Accept-Ranges；Range 206；越权/不存在 404；未知类型 400
+func TestGetRawDocument(t *testing.T) {
+	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
+
+	dir := t.TempDir()
+	pdfPath := dir + "/doc.pdf"
+	_ = os.WriteFile(pdfPath, []byte("%PDF-1.4 fake bytes"), 0o644)
+	docID := "11111111-2222-3333-4444-555555555555"
+	env.store.docs[docID] = store.Document{ID: docID, KBID: "kb-1", Filename: "doc.pdf", Format: ".pdf", FilePath: pdfPath, Status: store.DocStatusCompleted}
+
+	// 普通 GET → 200 + Content-Type + Accept-Ranges
+	w := doReq(t, env.router, "GET", "/api/v1/documents/"+docID+"/raw", nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("raw 应 200，实际 %d %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/pdf" {
+		t.Errorf("Content-Type 应为 application/pdf，实际 %q", ct)
+	}
+	if ar := w.Header().Get("Accept-Ranges"); ar != "bytes" {
+		t.Errorf("Accept-Ranges 应为 bytes，实际 %q", ar)
+	}
+
+	// Range 请求 → 206
+	req := httptest.NewRequest("GET", "/api/v1/documents/"+docID+"/raw", nil)
+	req.Header.Set("Range", "bytes=0-3")
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	w = httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	if w.Code != http.StatusPartialContent {
+		t.Fatalf("Range 请求应 206，实际 %d", w.Code)
+	}
+
+	// 越权/不存在（kb-2 不存在）→ 404
+	env.store.docs["22222222-3333-4444-5555-666666666666"] = store.Document{ID: "22222222-3333-4444-5555-666666666666", KBID: "kb-2", Filename: "x.pdf", Format: ".pdf", FilePath: pdfPath, Status: store.DocStatusCompleted}
+	w = doReq(t, env.router, "GET", "/api/v1/documents/22222222-3333-4444-5555-666666666666/raw", nil, testAPIKey)
+	if w.Code != 404 {
+		t.Errorf("越权/不存在应 404，实际 %d", w.Code)
+	}
+
+	// 未知扩展名 → 400
+	env.store.docs["33333333-3333-4444-5555-666666666666"] = store.Document{ID: "33333333-3333-4444-5555-666666666666", KBID: "kb-1", Filename: "x.exe", Format: ".exe", FilePath: dir + "/x.exe", Status: store.DocStatusCompleted}
+	_ = os.WriteFile(dir+"/x.exe", []byte("MZ"), 0o644)
+	w = doReq(t, env.router, "GET", "/api/v1/documents/33333333-3333-4444-5555-666666666666/raw", nil, testAPIKey)
+	if w.Code != 400 {
+		t.Errorf("未知扩展名应 400，实际 %d", w.Code)
+	}
+}
+
+// chunk 详情返回 page_number/heading/anchor（PDF/Markdown 定位锚点）
+func TestGetChunkReturnsLocation(t *testing.T) {
+	env := newTestEnv(t)
+	env.store.kbs["kb-1"] = store.KnowledgeBase{ID: "kb-1", Name: "库"}
+	env.store.docs["doc-1"] = store.Document{ID: "doc-1", KBID: "kb-1", Filename: "a.md", Status: store.DocStatusCompleted}
+
+	chunkID := "11111111-2222-3333-4444-555555555555"
+	env.vs.payloads = map[string]map[string]any{
+		chunkID: {
+			"content":     "内容",
+			"document_id": "doc-1",
+			"filename":    "a.md",
+			"page_number": float64(3),
+			"heading":     "模块设计",
+			"anchor":      "模块设计",
+		},
+	}
+
+	w := doReq(t, env.router, "GET", "/api/v1/chunks/"+chunkID, nil, testAPIKey)
+	if w.Code != 200 {
+		t.Fatalf("GetChunk 状态码错误: %d %s", w.Code, w.Body.String())
+	}
+	data, _ := decodeResp(t, w).Data.(map[string]any)
+	if data["page_number"] != float64(3) || data["heading"] != "模块设计" || data["anchor"] != "模块设计" {
+		t.Errorf("定位字段未返回: %+v", data)
 	}
 }

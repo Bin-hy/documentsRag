@@ -6,8 +6,6 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,7 +19,7 @@ import (
 
 func main() {
 	// 解析配置文件路径（与 cmd/server 一致：-c / BINRAG_CONFIG / 默认路径）
-	cfgPath := parseConfigFlag(os.Args[1:])
+	cfgPath := app.ParseConfigFlag(os.Args[1:])
 	cfg, err := config.LoadConfig(cfgPath)
 	if err != nil {
 		slog.Error("加载配置失败", "err", err, "path", cfgPath)
@@ -86,18 +84,4 @@ func main() {
 		slog.Error("桌面应用运行失败", "err", err)
 		os.Exit(1)
 	}
-}
-
-// parseConfigFlag 解析 -c / --config（与 internal/app.ParseConfigFlag 等价，
-// 桌面入口保持独立 flag 解析以免引入不必要的耦合）
-func parseConfigFlag(args []string) string {
-	fs := flag.NewFlagSet("binrag-desktop", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-
-	var path string
-	fs.StringVar(&path, "c", "", "配置文件路径")
-	fs.StringVar(&path, "config", "", "配置文件路径")
-
-	_ = fs.Parse(args)
-	return path
 }

@@ -30,6 +30,8 @@ type VectorStore interface {
 	// Get 按 ID 取单个点的 payload（引用来源查看 chunk 原文用）；不存在返回 ok=false
 	Get(ctx context.Context, id string) (map[string]any, bool, error)
 	Delete(ctx context.Context, ids []string) error
+	// DeleteByFilter 按 payload 过滤条件删除（pipeline 重试补偿：清理同一 document_id 的旧 chunk）
+	DeleteByFilter(ctx context.Context, filter map[string]any) error
 	EnsureCollection(ctx context.Context) error
 	Close() error
 }

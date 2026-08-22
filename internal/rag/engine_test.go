@@ -1143,6 +1143,44 @@ func TestAsk_HyDE(t *testing.T) {
 	}
 }
 
+// HyDE 策略门控：通过三级策略（strategy.hyde=on）启用，不依赖旧开关 HyDEEnabled。
+// 回归守卫——旧实现 shouldHyde 读 e.cfg.HyDEOn()，仅设 Strategy.HyDE 时不会触发；
+// 修复后按 eff.HyDE 门控，本例应生效并调用 SearchByVector。
+func TestAsk_HyDE_StrategyGate(t *testing.T) {
+	cfg := testRAGConfig()
+	cfg.Strategy.HyDE = "on"      // 仅走新策略路径，HyDEEnabled 保持 nil
+	cfg.Strategy.Query = "single" // HyDE 与 multi_query 互斥（call site: && eff.Query != "multi"），默认 query=multi 会绕过 HyDE 分支
+	cfg.Strategy.Fusion = "none"  // query=single 必须 fusion=none，否则 ResolveStrategy 校验失败降级 DefaultEffectiveStrategy(hyde=off)
+
+	var genCalls int
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			genCalls++
+			if genCalls == 1 {
+				return "假设文档内容", nil
+			}
+			return "HyDE 回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	fe := &fakeEmbedder{}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(cfg, fl, ft, hs, fe)
+
+	if _, err := engine.Ask(context.Background(), "s1", "模糊问题"); err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	ft.mu.Lock()
+	defer ft.mu.Unlock()
+	if ft.byVecCalls == 0 {
+		t.Errorf("strategy.hyde=on 应触发 HyDE 并调用 SearchByVector")
+	}
+}
+
 // HyDE skip_simple：simple 查询不生成假设文档
 func TestAsk_HyDESkipSimple(t *testing.T) {
 	cfg := testRAGConfig()

@@ -1027,6 +1027,52 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/documents/supported-types": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "返回当前配置下各扩展名的支持状态（含类别与不支持原因），前端据此渲染上传面板可选类型",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "文档"
+                ],
+                "summary": "支持的文件类型",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/loader.SupportedType"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/documents/upload": {
             "post": {
                 "security": [
@@ -1177,6 +1223,52 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/documents/{id}/raw": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "按文档 ID 返回原始文件内容（Content-Type 按扩展名映射），支持 HTTP Range",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "文档"
+                ],
+                "summary": "原文文件",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "文档 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "文件内容",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/api.Response"
                         }
@@ -1514,6 +1606,276 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/mcp/my/key": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "为当前用户生成 MCP 访问凭据（绑定用户，每用户至多一个）；已有凭据返回 409，需吊销后重建。明文仅此一次返回。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "生成我的 MCP Key",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.CreateMyKeyResult"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "删除当前用户的 MCP 凭据（立即失效，不可恢复）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "吊销我的 MCP Key",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mcp/my/key/permissions": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "全量更新当前用户 MCP 凭据的 Tool 白名单与知识库范围；知识库可选项限于用户自己的知识库（越权 id → 400）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "配置我的 MCP 权限",
+                "parameters": [
+                    {
+                        "description": "MCP 权限配置",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/store.APIKeyPermissions"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mcp/my/key/toggle": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "启用/停用当前用户的 MCP 凭据（停用后 MCP 调用拒绝）",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "启停我的 MCP Key",
+                "parameters": [
+                    {
+                        "description": "启用状态",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "enabled": {
+                                    "type": "boolean"
+                                }
+                            }
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/mcp/my/status": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "返回全局 MCP 开关、我的 MCP 凭据（无则 null）、端点路径（登录用户）",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "MCP"
+                ],
+                "summary": "我的 MCP 状态",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.MyMCPStatus"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/tasks/{id}": {
             "get": {
                 "security": [
@@ -1647,6 +2009,52 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/api/v1/videos/{id}/stream": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "按文档 ID 流式返回视频文件，支持 HTTP Range（浏览器 video 标签 seek）",
+                "produces": [
+                    "video/mp4"
+                ],
+                "tags": [
+                    "文档"
+                ],
+                "summary": "视频流式播放",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "视频文档 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "206": {
+                        "description": "Partial Content（Range 请求）",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1661,6 +2069,9 @@ const docTemplate = `{
                 },
                 "loader": {
                     "$ref": "#/definitions/api.LoaderPatch"
+                },
+                "mcp": {
+                    "$ref": "#/definitions/api.MCPPatch"
                 },
                 "rag_strategy": {
                     "$ref": "#/definitions/config.StrategyConfig"
@@ -1688,6 +2099,17 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/api.ReadOnlyConfig"
                     }
+                }
+            }
+        },
+        "api.CreateMyKeyResult": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
                 }
             }
         },
@@ -1760,6 +2182,34 @@ const docTemplate = `{
                 }
             }
         },
+        "api.MCPPatch": {
+            "type": "object",
+            "properties": {
+                "audit_param_limit": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.MCPView": {
+            "type": "object",
+            "properties": {
+                "audit_param_limit": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "path": {
+                    "type": "string"
+                }
+            }
+        },
         "api.MutableConfigView": {
             "type": "object",
             "properties": {
@@ -1772,6 +2222,9 @@ const docTemplate = `{
                 "loader": {
                     "$ref": "#/definitions/api.LoaderView"
                 },
+                "mcp": {
+                    "$ref": "#/definitions/api.MCPView"
+                },
                 "rag_strategy": {
                     "$ref": "#/definitions/config.StrategyConfig"
                 },
@@ -1780,6 +2233,53 @@ const docTemplate = `{
                 },
                 "retriever": {
                     "$ref": "#/definitions/api.RetrieverView"
+                }
+            }
+        },
+        "api.MyMCPKey": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "mcp_kb_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "mcp_kb_scope": {
+                    "type": "string"
+                },
+                "mcp_tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.MyMCPStatus": {
+            "type": "object",
+            "properties": {
+                "global_enabled": {
+                    "description": "全局 mcp.enabled（bootstrap 管部署级）",
+                    "type": "boolean"
+                },
+                "key": {
+                    "description": "我的凭据；无则 null",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.MyMCPKey"
+                        }
+                    ]
+                },
+                "mcp_path": {
+                    "description": "配置的端点路径（连接信息用）",
+                    "type": "string"
                 }
             }
         },
@@ -2079,6 +2579,10 @@ const docTemplate = `{
                 "content": {
                     "type": "string"
                 },
+                "reasoning_content": {
+                    "description": "DeepSeek thinking 思维链：thinking 模式下 assistant 消息（含 tool_calls）回传时必须原样附带，否则 API 400",
+                    "type": "string"
+                },
                 "role": {
                     "type": "string"
                 },
@@ -2116,6 +2620,26 @@ const docTemplate = `{
                 }
             }
         },
+        "loader.SupportedType": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "description": "text / image / audio / video",
+                    "type": "string"
+                },
+                "ext": {
+                    "description": "如 \".mp3\"（小写）",
+                    "type": "string"
+                },
+                "reason": {
+                    "description": "不支持原因",
+                    "type": "string"
+                },
+                "supported": {
+                    "type": "boolean"
+                }
+            }
+        },
         "rag.RAGResult": {
             "type": "object",
             "properties": {
@@ -2140,6 +2664,14 @@ const docTemplate = `{
         "rag.Source": {
             "type": "object",
             "properties": {
+                "anchor": {
+                    "description": "Markdown 标题锚点",
+                    "type": "string"
+                },
+                "end_ms": {
+                    "description": "定位结束时间戳（毫秒）",
+                    "type": "integer"
+                },
                 "filename": {
                     "description": "来源文件名（来自元数据）",
                     "type": "string"
@@ -2152,6 +2684,10 @@ const docTemplate = `{
                     "description": "检索片段 ID",
                     "type": "string"
                 },
+                "page_number": {
+                    "description": "PDF 页码（从 1 开始）",
+                    "type": "integer"
+                },
                 "score": {
                     "description": "检索分数",
                     "type": "number"
@@ -2159,6 +2695,10 @@ const docTemplate = `{
                 "source_type": {
                     "description": "来源类型（vector_store / web_search 等）",
                     "type": "string"
+                },
+                "start_ms": {
+                    "description": "视频/音频定位起始时间戳（毫秒）",
+                    "type": "integer"
                 }
             }
         },
@@ -2322,12 +2862,21 @@ const docTemplate = `{
                 },
                 "updatedAt": {
                     "type": "string"
+                },
+                "warningMessage": {
+                    "description": "非阻断告警（如视频音轨降级），空 = 无",
+                    "type": "string"
                 }
             }
         }
     },
     "securityDefinitions": {
         "ApiKeyAuth": {
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
+        "BearerAuth": {
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

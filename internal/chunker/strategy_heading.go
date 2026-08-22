@@ -10,6 +10,8 @@ import (
 type headingSection struct {
 	Content        string
 	HeadingContext string
+	Heading        string // 当前块最近一级标题文本（为空表示无标题）
+	Anchor         string // 标题锚点（slugifyHeading(Heading)）
 }
 
 type headingStrategy struct {
@@ -37,9 +39,15 @@ func (s *headingStrategy) SplitByBlocks(blocks []loader.Block, config ChunkerCon
 		content := strings.TrimSpace(currentContent.String())
 		if content != "" {
 			ctx := strings.Join(headingStack, " > ")
+			heading := ""
+			if len(headingStack) > 0 {
+				heading = headingStack[len(headingStack)-1]
+			}
 			section := headingSection{
 				Content:        content,
 				HeadingContext: ctx,
+				Heading:        heading,
+				Anchor:         slugifyHeading(heading),
 			}
 
 			// 超长降级
@@ -49,6 +57,8 @@ func (s *headingStrategy) SplitByBlocks(blocks []loader.Block, config ChunkerCon
 					sections = append(sections, headingSection{
 						Content:        sub,
 						HeadingContext: ctx,
+						Heading:        heading,
+						Anchor:         section.Anchor,
 					})
 				}
 			} else {

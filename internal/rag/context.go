@@ -15,6 +15,10 @@ type Source struct {
 	Heading    string  `json:"heading"`               // 标题上下文
 	Score      float32 `json:"score"`                 // 检索分数
 	SourceType string  `json:"source_type,omitempty"` // 来源类型（vector_store / web_search 等）
+	StartMs    int64   `json:"start_ms,omitempty"`    // 视频/音频定位起始时间戳（毫秒）
+	EndMs      int64   `json:"end_ms,omitempty"`      // 定位结束时间戳（毫秒）
+	PageNumber int     `json:"page_number,omitempty"` // PDF 页码（从 1 开始）
+	Anchor     string  `json:"anchor,omitempty"`      // Markdown 标题锚点
 }
 
 // ContextItem 单条上下文（供模板渲染）
@@ -65,6 +69,10 @@ func buildContext(chunks []retriever.RetrieveResult, maxTokens int, maxChunks in
 			Heading:    item.Heading,
 			Score:      chunk.Score,
 			SourceType: metaString(chunk.Metadata, "source_type"),
+			StartMs:    metaInt(chunk.Metadata, "start_ms"),
+			EndMs:      metaInt(chunk.Metadata, "end_ms"),
+			PageNumber: int(metaInt(chunk.Metadata, "page_number")),
+			Anchor:     metaString(chunk.Metadata, "anchor"),
 		})
 	}
 
@@ -102,6 +110,24 @@ func metaString(m map[string]any, key string) string {
 		return ""
 	}
 	return v
+}
+
+// metaInt 从元数据安全提取 int64（兼容 JSON 往返后的 float64/int 等）
+func metaInt(m map[string]any, key string) int64 {
+	if m == nil {
+		return 0
+	}
+	switch v := m[key].(type) {
+	case int64:
+		return v
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case float32:
+		return int64(v)
+	}
+	return 0
 }
 
 // estimateTokens 轻量 token 估算：中文字符 2 token、英文按词 1、标点 1（与 chunker 思路一致）

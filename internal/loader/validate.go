@@ -68,6 +68,14 @@ func ValidateReadable(doc *Document, minChars int) error {
 		return &ErrNoReadableContent{Format: "", Readable: 0, MinChars: minChars}
 	}
 
+	// 多媒体（音频/图片/视频）转写文本按时间分段产出，每个 block 可能仅数字符，
+	// 不适用「单块 ≥ minChars」的 PDF 防碎片绕过判定。各媒体解析器已各自保证非空产出，
+	// 且上传预检已对媒体豁免可读性校验；此处与上传侧保持一致，避免有效转写在入库阶段被误拒。
+	switch doc.Metadata.Format {
+	case "audio", "image", "video":
+		return nil
+	}
+
 	total := 0
 	maxBlock := 0
 	for _, b := range doc.Blocks {

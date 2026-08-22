@@ -83,6 +83,14 @@ export interface UploadResult {
   document_id: string
 }
 
+// 支持的文件类型（后端 /documents/supported-types 返回，与 loader.SupportedType 对齐）
+export interface SupportedType {
+  ext: string
+  category: 'text' | 'image' | 'audio' | 'video'
+  supported: boolean
+  reason?: string
+}
+
 // 对话
 // ---- 思考链路（thinking）----
 // 环节类型与后端 ThinkingStepType 对齐
@@ -182,6 +190,11 @@ export interface ChatSource {
   filename: string
   heading: string
   score: number
+  source_type?: string
+  start_ms?: number
+  end_ms?: number
+  page_number?: number
+  anchor?: string
 }
 
 export interface ChatMessage {

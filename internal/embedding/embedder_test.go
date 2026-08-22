@@ -35,7 +35,7 @@ func TestEmbedNormal(t *testing.T) {
 	}))
 	defer server.Close()
 
-	emb := NewEmbedder(config.EmbedderConfig{
+	emb, err := NewEmbedder(config.EmbedderConfig{
 		BaseURL:    server.URL,
 		Model:      "test-model",
 		Dimension:  dim,
@@ -43,6 +43,9 @@ func TestEmbedNormal(t *testing.T) {
 		MaxRetries: 3,
 		QPS:        100,
 	})
+	if err != nil {
+		t.Fatalf("NewEmbedder 失败: %v", err)
+	}
 
 	texts := make([]string, 10)
 	for i := range texts {
@@ -86,20 +89,23 @@ func TestEmbedBatchSplit(t *testing.T) {
 	}))
 	defer server.Close()
 
-	emb := NewEmbedder(config.EmbedderConfig{
+	emb, err := NewEmbedder(config.EmbedderConfig{
 		BaseURL:    server.URL,
 		Model:      "test",
 		BatchSize:  20,
 		MaxRetries: 3,
 		QPS:        100,
 	})
+	if err != nil {
+		t.Fatalf("NewEmbedder 失败: %v", err)
+	}
 
 	texts := make([]string, 100)
 	for i := range texts {
 		texts[i] = "text"
 	}
 
-	_, err := emb.Embed(context.Background(), texts)
+	_, err = emb.Embed(context.Background(), texts)
 	if err != nil {
 		t.Fatalf("Embed 失败: %v", err)
 	}
@@ -136,13 +142,16 @@ func TestEmbedRetry(t *testing.T) {
 	}))
 	defer server.Close()
 
-	emb := NewEmbedder(config.EmbedderConfig{
+	emb, err := NewEmbedder(config.EmbedderConfig{
 		BaseURL:    server.URL,
 		Model:      "test",
 		BatchSize:  100,
 		MaxRetries: 3,
 		QPS:        100,
 	})
+	if err != nil {
+		t.Fatalf("NewEmbedder 失败: %v", err)
+	}
 
 	vectors, err := emb.Embed(context.Background(), []string{"hello"})
 	if err != nil {
@@ -165,18 +174,21 @@ func TestEmbedTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	emb := NewEmbedder(config.EmbedderConfig{
+	emb, err := NewEmbedder(config.EmbedderConfig{
 		BaseURL:    server.URL,
 		Model:      "test",
 		BatchSize:  100,
 		MaxRetries: 0,
 		QPS:        100,
 	})
+	if err != nil {
+		t.Fatalf("NewEmbedder 失败: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	_, err := emb.Embed(ctx, []string{"hello"})
+	_, err = emb.Embed(ctx, []string{"hello"})
 	if err == nil {
 		t.Fatal("超时应返回错误")
 	}

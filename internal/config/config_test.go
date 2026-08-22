@@ -171,3 +171,89 @@ func TestOIDCDisabledNoValidation(t *testing.T) {
 		t.Fatalf("未启用时不应校验: %v", err)
 	}
 }
+
+// 多媒体能力配置默认值：FrameIntervalSec=10、Timeout=30、Provider=openai_compat、未配 APIKey 时不可用
+func TestMultimediaConfigDefaults(t *testing.T) {
+	c := &Config{}
+	c.applyDefaults()
+
+	if c.Multimedia.FrameIntervalSec != 10 {
+		t.Errorf("FrameIntervalSec 默认应为 10，实际 %d", c.Multimedia.FrameIntervalSec)
+	}
+	if c.Multimedia.Vision.Provider != "openai_compat" || c.Multimedia.Speech.Provider != "openai_compat" {
+		t.Errorf("Provider 默认应为 openai_compat，实际 vision=%q speech=%q", c.Multimedia.Vision.Provider, c.Multimedia.Speech.Provider)
+	}
+	if c.Multimedia.Vision.Timeout != 30 || c.Multimedia.Speech.Timeout != 30 {
+		t.Errorf("Timeout 默认应为 30，实际 vision=%d speech=%d", c.Multimedia.Vision.Timeout, c.Multimedia.Speech.Timeout)
+	}
+	if c.Multimedia.Vision.Available() || c.Multimedia.Speech.Available() {
+		t.Error("未配置 APIKey 时 Available() 应为 false")
+	}
+}
+
+// 多媒体显式配置生效 + Available 判定 + BaseURL 合法性校验
+func TestMultimediaConfigExplicitAndValidate(t *testing.T) {
+	c := &Config{Multimedia: MultimediaConfig{
+		Vision:           MultimediaServiceConfig{APIKey: "k", Model: "gpt-4o", BaseURL: "http://localhost:8000/v1"},
+		Speech:           MultimediaServiceConfig{APIKey: "k2", Model: "whisper-1"},
+		FrameIntervalSec: 5,
+	}}
+	c.applyDefaults()
+
+	if !c.Multimedia.Vision.Available() || !c.Multimedia.Speech.Available() {
+		t.Error("配置 APIKey 后 Available() 应为 true")
+	}
+	if c.Multimedia.FrameIntervalSec != 5 {
+		t.Errorf("显式 FrameIntervalSec 应保留，实际 %d", c.Multimedia.FrameIntervalSec)
+	}
+
+	bad := &Config{Multimedia: MultimediaConfig{
+		Vision: MultimediaServiceConfig{APIKey: "k", BaseURL: "not-a-url"},
+	}}
+	if err := bad.Validate(); err == nil {
+		t.Error("非法 base_url 应校验失败")
+	}
+}
+
+// 视频处理配置默认值 + frame_strategy/scene 校验（spec F4）
+func TestVideoConfigDefaultsAndValidate(t *testing.T) {
+	c := &Config{}
+	c.applyDefaults()
+
+	if c.Multimedia.Video.FrameStrategy != "fixed" {
+		t.Errorf("FrameStrategy 默认应为 fixed，实际 %q", c.Multimedia.Video.FrameStrategy)
+	}
+	if c.Multimedia.Video.FrameIntervalSec != 10 {
+		t.Errorf("Video.FrameIntervalSec 应继承顶层 10，实际 %d", c.Multimedia.Video.FrameIntervalSec)
+	}
+	if c.Multimedia.Video.Scene.SampleFPS != 2 ||
+		c.Multimedia.Video.Scene.SimilarityThreshold != 0.85 ||
+		c.Multimedia.Video.Scene.MinSceneDurationMs != 3000 {
+		t.Errorf("Scene 默认值错误: %+v", c.Multimedia.Video.Scene)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("默认 fixed 配置应校验通过: %v", err)
+	}
+
+	// scene 缺 vision_embedding → 校验失败
+	scene := &Config{}
+	scene.Multimedia.Video.FrameStrategy = "scene"
+	if err := scene.Validate(); err == nil {
+		t.Error("scene 缺 vision_embedding 应校验失败")
+	}
+
+	// scene + vision_embedding → 通过
+	ok := &Config{}
+	ok.Multimedia.Video.FrameStrategy = "scene"
+	ok.Multimedia.Video.VisionEmbedding.APIKey = "k"
+	if err := ok.Validate(); err != nil {
+		t.Errorf("scene + vision_embedding 应通过: %v", err)
+	}
+
+	// 非法 frame_strategy
+	bad := &Config{}
+	bad.Multimedia.Video.FrameStrategy = "bogus"
+	if err := bad.Validate(); err == nil {
+		t.Error("非法 frame_strategy 应校验失败")
+	}
+}

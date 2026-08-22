@@ -1,23 +1,51 @@
 <script setup lang="ts">
-// 引用来源卡片：文件名 + 标题 + 分数；点击查看 chunk 原文
+// 引用来源卡片：文件名 + 标题 + 分数；点击按类型打开专用阅读器，否则查看 chunk 原文
 import { ref } from 'vue'
 import { Document } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { ChatSource } from '../api/types'
 import { getChunk, type ChunkDetail } from '../api/chunk'
+import DocumentViewer from './viewer/DocumentViewer.vue'
+import { resolveViewer } from './viewer/ViewerRegistry'
+import type { ViewerLocation, ViewerType } from './viewer/types'
 
 const props = defineProps<{ sources: ChatSource[] }>()
 
 const dialogVisible = ref(false)
 const loading = ref(false)
 const detail = ref<ChunkDetail | null>(null)
+const fileType = ref<ViewerType | null>(null)
+const location = ref<ViewerLocation>({})
+
+function inferFileType(d: ChunkDetail): ViewerType | null {
+  if (d.source_type === 'video') return 'video'
+  if (d.source_type === 'audio') return 'audio'
+  const name = (d.filename || '').toLowerCase()
+  if (name.endsWith('.pdf')) return 'pdf'
+  if (name.endsWith('.md') || name.endsWith('.markdown')) return 'markdown'
+  return null
+}
 
 async function openChunk(src: ChatSource) {
   loading.value = true
   detail.value = null
+  fileType.value = null
+  location.value = {}
   dialogVisible.value = true
   try {
-    detail.value = await getChunk(src.id)
+    const d = await getChunk(src.id)
+    detail.value = d
+    const t = inferFileType(d)
+    if (t && resolveViewer(t)) {
+      fileType.value = t
+      location.value = {
+        page: d.page_number,
+        startMs: d.start_ms,
+        endMs: d.end_ms,
+        anchor: d.anchor,
+        heading: d.heading,
+      }
+    }
   } catch (e) {
     dialogVisible.value = false
     ElMessage.error('加载引用原文失败：' + (e instanceof Error ? e.message : String(e)))
@@ -49,10 +77,22 @@ async function openChunk(src: ChatSource) {
       </div>
     </div>
 
-    <!-- chunk 原文弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="detail?.filename || '引用原文'" width="680px" top="8vh">
+    <!-- 原文查看弹窗：有专用阅读器则渲染，否则回退纯文本 -->
+    <el-dialog
+      v-model="dialogVisible"
+      :title="detail?.filename || '引用原文'"
+      width="min(1200px, 94vw)"
+      top="4vh"
+    >
       <div v-loading="loading" class="chunk-content">
-        <pre v-if="detail" class="chunk-pre">{{ detail.content }}</pre>
+        <DocumentViewer
+          v-if="detail && fileType"
+          :document-id="detail.document_id"
+          :filename="detail.filename"
+          :file-type="fileType"
+          :location="location"
+        />
+        <pre v-else-if="detail" class="chunk-pre">{{ detail.content }}</pre>
       </div>
     </el-dialog>
   </div>
@@ -149,7 +189,7 @@ async function openChunk(src: ChatSource) {
 }
 
 .chunk-content {
-  max-height: 60vh;
+  max-height: 82vh;
   overflow: auto;
 }
 

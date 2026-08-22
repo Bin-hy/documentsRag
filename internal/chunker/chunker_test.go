@@ -311,3 +311,137 @@ func getLastNChars(s string, n int) string {
 	}
 	return string(runes[len(runes)-n:])
 }
+
+// 多媒体按块切分：每个 Image/Audio Block 一个 chunk，时间戳与来源类型 1:1 贯通
+func TestChunkMediaBlocks(t *testing.T) {
+	c := NewChunker(nil).(*defaultChunker)
+	doc := &loader.Document{
+		Blocks: []loader.Block{
+			{Type: loader.BlockImageDescription, Content: "画面一", Metadata: map[string]any{"media_type": "video_frame", "start_ms": int64(0), "end_ms": int64(10000)}},
+			{Type: loader.BlockImageDescription, Content: "画面二", Metadata: map[string]any{"media_type": "video_frame", "start_ms": int64(10000), "end_ms": int64(20000)}},
+			{Type: loader.BlockAudioSegment, Content: "大家好", Metadata: map[string]any{"media_type": "audio", "start_ms": int64(0), "end_ms": int64(3000)}},
+		},
+		Metadata: loader.DocumentMeta{Filename: "demo.mp4"},
+	}
+
+	chunks := c.Chunk(doc, ChunkerConfig{})
+	if len(chunks) != 3 {
+		t.Fatalf("应产出 3 个 chunk（按块切分），实际 %d", len(chunks))
+	}
+	if chunks[0].Content != "画面一" || chunks[0].Metadata.SourceType != "video" {
+		t.Errorf("chunk0 错误: %+v", chunks[0])
+	}
+	if chunks[0].Metadata.StartMs != 0 || chunks[0].Metadata.EndMs != 10000 {
+		t.Errorf("chunk0 时间戳错误: %+v", chunks[0].Metadata)
+	}
+	if chunks[1].Metadata.StartMs != 10000 || chunks[1].Metadata.EndMs != 20000 {
+		t.Errorf("chunk1 时间戳错误: %+v", chunks[1].Metadata)
+	}
+	if chunks[2].Metadata.SourceType != "audio" || chunks[2].Metadata.StartMs != 0 || chunks[2].Metadata.EndMs != 3000 {
+		t.Errorf("chunk2（音频）错误: %+v", chunks[2].Metadata)
+	}
+	if chunks[0].Metadata.DocFilename != "demo.mp4" {
+		t.Errorf("DocFilename 错误: %q", chunks[0].Metadata.DocFilename)
+	}
+}
+
+// 纯图片（无 video_frame）来源类型为 image
+func TestChunkMediaImageSourceType(t *testing.T) {
+	c := NewChunker(nil).(*defaultChunker)
+	doc := &loader.Document{
+		Blocks: []loader.Block{
+			{Type: loader.BlockImageDescription, Content: "一张图", Metadata: map[string]any{"media_type": "image", "width": 10, "height": 20}},
+		},
+		Metadata: loader.DocumentMeta{Filename: "a.png"},
+	}
+	chunks := c.Chunk(doc, ChunkerConfig{})
+	if len(chunks) != 1 || chunks[0].Metadata.SourceType != "image" {
+		t.Errorf("纯图片来源类型应为 image: %+v", chunks)
+	}
+}
+
+// slugifyHeading：去 Markdown 特殊字符、空白转 '-'、中文保留
+func TestSlugifyHeading(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"模块设计", "模块设计"},
+		{"A  B", "A--B"},
+		{"#*_x", "x"},
+		{"标题 [x] (y)", "标题-x-y"},
+	}
+	for _, c := range cases {
+		if got := slugifyHeading(c.in); got != c.want {
+			t.Errorf("slugifyHeading(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// PDF 按页分块：chunk 带 PageNumber
+func TestChunkPagedBlocks(t *testing.T) {
+	c := NewChunker(nil).(*defaultChunker)
+	doc := &loader.Document{
+		Blocks: []loader.Block{
+			{Type: loader.BlockParagraph, Content: "第一页内容", Metadata: map[string]any{"page": 1}},
+			{Type: loader.BlockParagraph, Content: "第二页内容", Metadata: map[string]any{"page": 2}},
+		},
+		Metadata: loader.DocumentMeta{Filename: "a.pdf"},
+	}
+	chunks := c.Chunk(doc, ChunkerConfig{})
+	if len(chunks) != 2 {
+		t.Fatalf("应产出 2 个 chunk（每页一个），实际 %d", len(chunks))
+	}
+	if chunks[0].Metadata.PageNumber != 1 || chunks[1].Metadata.PageNumber != 2 {
+		t.Errorf("PageNumber 应为 1/2，实际 %d/%d", chunks[0].Metadata.PageNumber, chunks[1].Metadata.PageNumber)
+	}
+	if chunks[0].Content != "第一页内容" || chunks[1].Content != "第二页内容" {
+		t.Errorf("按页内容错误: %q / %q", chunks[0].Content, chunks[1].Content)
+	}
+}
+
+// Markdown heading 策略：chunk 带 Heading/Anchor
+func TestChunkMarkdownHeadingAnchor(t *testing.T) {
+	c := NewChunker(nil).(*defaultChunker)
+	doc := &loader.Document{
+		Blocks: []loader.Block{
+			{Type: loader.BlockHeading, Content: "模块设计", Level: 2},
+			{Type: loader.BlockParagraph, Content: "这是内容"},
+		},
+		Metadata: loader.DocumentMeta{Filename: "a.md"},
+	}
+	chunks := c.Chunk(doc, ChunkerConfig{Strategy: StrategyHeading})
+	if len(chunks) != 1 {
+		t.Fatalf("应产出 1 个 chunk，实际 %d", len(chunks))
+	}
+	if chunks[0].Metadata.Heading != "模块设计" {
+		t.Errorf("Heading 应为「模块设计」，实际 %q", chunks[0].Metadata.Heading)
+	}
+	if chunks[0].Metadata.Anchor != "模块设计" {
+		t.Errorf("Anchor 应为「模块设计」，实际 %q", chunks[0].Metadata.Anchor)
+	}
+	if chunks[0].Metadata.HeadingContext != "模块设计" {
+		t.Errorf("HeadingContext 应为「模块设计」，实际 %q", chunks[0].Metadata.HeadingContext)
+	}
+}
+
+// 视频文档的音轨转写 chunk 也应归为 video（按文档格式判定，避免误判 audio）
+func TestChunkMediaVideoAudioTrackSourceType(t *testing.T) {
+	c := NewChunker(nil).(*defaultChunker)
+	doc := &loader.Document{
+		Blocks: []loader.Block{
+			{Type: loader.BlockImageDescription, Content: "画面", Metadata: map[string]any{"media_type": "video_frame", "start_ms": int64(0), "end_ms": int64(10000)}},
+			{Type: loader.BlockAudioSegment, Content: "音轨转写", Metadata: map[string]any{"media_type": "audio", "start_ms": int64(0), "end_ms": int64(0)}},
+		},
+		Metadata: loader.DocumentMeta{Filename: "demo.mp4", Format: "video"},
+	}
+	chunks := c.Chunk(doc, ChunkerConfig{})
+	if len(chunks) != 2 {
+		t.Fatalf("应产出 2 个 chunk，实际 %d", len(chunks))
+	}
+	for i, ch := range chunks {
+		if ch.Metadata.SourceType != "video" {
+			t.Errorf("视频文档 chunk[%d] 应归为 video，实际 %q", i, ch.Metadata.SourceType)
+		}
+	}
+	if chunks[0].Metadata.EndMs != 10000 {
+		t.Errorf("视觉帧 chunk 时间戳应保留，实际 %+v", chunks[0].Metadata)
+	}
+}

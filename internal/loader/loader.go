@@ -15,6 +15,9 @@ func NewLoader() Loader {
 }
 
 // NewDefaultRegistry 创建注册了全部内置解析器的注册表（供 API 层扩展名校验复用）
+// 多媒体 parser 默认以 nil 能力注册：未配置 multimedia.vision/speech 时，
+// 对应类型文件在 CheckCapabilities 阶段即被明确拒绝（spec F7/AC5）；
+// app 装配层在配置就绪后用真实 provider 覆盖注册同名扩展名。
 func NewDefaultRegistry() Registry {
 	r := NewRegistry()
 	r.Register(NewTxtParser())
@@ -24,6 +27,10 @@ func NewDefaultRegistry() Registry {
 	r.Register(NewCsvParser())
 	r.Register(NewExcelParser())
 	r.Register(NewHtmlParser())
+	// 多媒体（nil 能力兜底，配置后由装配层覆盖）
+	r.Register(NewImageParser(nil))
+	r.Register(NewAudioParser(nil))
+	r.Register(NewVideoParser(nil, nil, nil, nil, nil, FrameStrategyConfig{}))
 	return r
 }
 
@@ -33,9 +40,12 @@ func NewLoaderWithRegistry(r Registry) Loader {
 }
 
 func (l *defaultLoader) Load(ctx context.Context, reader io.Reader, info FileInfo, opts ...LoadOptions) (*LoadResult, error) {
-	opt := LoadOptions{Mode: ModeTolerant}
+	opt := LoadOptions{Mode: ModeTolerant, Filename: info.Filename}
 	if len(opts) > 0 {
 		opt = opts[0]
+		if opt.Filename == "" {
+			opt.Filename = info.Filename
+		}
 	}
 
 	parser, err := l.registry.Resolve(info)

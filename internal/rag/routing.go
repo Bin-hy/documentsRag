@@ -45,9 +45,11 @@ func (e *RAGEngine) routeQuery(ctx context.Context, question, allowedText string
 	return routeResult{Complexity: parsed.Complexity, Strategy: parsed.Strategy, DataSource: parsed.DataSource, Reasoning: parsed.Reasoning}, true, nil
 }
 
-// shouldHyde 判断当前查询是否应用 HyDE（skip_simple 且 simple 查询时跳过）
-func (e *RAGEngine) shouldHyde(route routeResult) bool {
-	if !e.cfg.HyDEOn() || e.embedder == nil {
+// shouldHyde 判断当前查询是否应用 HyDE。
+// 按生效策略 effHyDE 门控（与 query/decomposition/step_back/routing 一致，支持全局/知识库/请求三级合并）；
+// skip_simple 且路由判定为 simple 查询时跳过。
+func (e *RAGEngine) shouldHyde(effHyDE string, route routeResult) bool {
+	if effHyDE != "on" || e.embedder == nil {
 		return false
 	}
 	if e.cfg.HyDESkipSimpleOn() && route.Complexity == "simple" {

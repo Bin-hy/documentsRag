@@ -142,6 +142,13 @@ func (h *handler) ChatStream(c *gin.Context) {
 	if !ok {
 		return
 	}
+
+	eng := h.engine()
+	if eng == nil {
+		Fail(c, CodeInternal, "引擎未初始化")
+		return
+	}
+
 	// 思考链路：thinking 事件由 engine 内部转发到事件流（开启时），此处只做分发（G2）
 	askOpts := []rag.AskOption{
 		// 多库展开（KBIDs）时策略按原始 kb_id（空 → 全局）取用，各库策略暂不合并
@@ -153,7 +160,7 @@ func (h *handler) ChatStream(c *gin.Context) {
 	} else if len(kbIDs) > 0 {
 		askOpts = append(askOpts, rag.WithKBIDs(kbIDs))
 	}
-	events, err := h.engine().StreamAsk(c.Request.Context(), req.SessionID, req.Question, askOpts...)
+	events, err := eng.StreamAsk(c.Request.Context(), req.SessionID, req.Question, askOpts...)
 	if err != nil {
 		Fail(c, CodeInternal, "启动流式问答失败: "+err.Error())
 		return

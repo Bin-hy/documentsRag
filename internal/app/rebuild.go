@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"sync/atomic"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
 	"github.com/Bin-hy/bin-rag/internal/datasource"
@@ -31,7 +32,10 @@ func BuildRuntime(
 	bm25 retriever.BM25Index,
 	history rag.HistoryStore,
 ) (*RuntimeComponents, error) {
-	emb := embedding.NewEmbedder(cfg.Embedder)
+	emb, err := embedding.NewEmbedder(cfg.Embedder)
+	if err != nil {
+		return nil, fmt.Errorf("初始化 Embedder 失败: %w", err)
+	}
 	llmClient := llm.NewLLM(cfg.LLM)
 	rr := reranker.NewReranker(cfg.Reranker)
 	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)
@@ -52,13 +56,19 @@ func BuildRuntime(
 	}, nil
 }
 
-// rebuildComponents 生成 ConfigManager.Update 的 rebuild 回调：
-// 按新配置构建组件并原子替换 App.components。
-func (a *App) rebuildComponents(newCfg *config.Config) error {
-	rt, err := BuildRuntime(newCfg, a.vs, a.bm25, a.historyAdapter)
+// rebuildComponents 按新配置构建组件并原子替换 components。
+// 自由函数（非 App 方法），供 New 中的 Rebuild 闭包和 App 方法共用，消除重复逻辑。
+func rebuildComponents(
+	newCfg *config.Config,
+	vs vectorstore.VectorStore,
+	bm25 retriever.BM25Index,
+	historyAdapter *ragHistoryAdapter,
+	components *atomic.Pointer[RuntimeComponents],
+) error {
+	rt, err := BuildRuntime(newCfg, vs, bm25, historyAdapter)
 	if err != nil {
 		return fmt.Errorf("构建运行时组件失败: %w", err)
 	}
-	a.components.Store(rt)
+	components.Store(rt)
 	return nil
 }

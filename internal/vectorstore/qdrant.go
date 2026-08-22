@@ -164,6 +164,25 @@ func (s *qdrantStore) Delete(ctx context.Context, ids []string) error {
 	return nil
 }
 
+// DeleteByFilter 按 payload 过滤条件删除点（pipeline 重试补偿用）
+func (s *qdrantStore) DeleteByFilter(ctx context.Context, filter map[string]any) error {
+	if len(filter) == 0 {
+		return nil
+	}
+
+	waitTrue := true
+	_, err := s.client.Delete(ctx, &pb.DeletePoints{
+		CollectionName: s.config.CollectionName,
+		Points:         pb.NewPointsSelectorFilter(buildFilter(filter)),
+		Wait:           &waitTrue,
+	})
+	if err != nil {
+		return fmt.Errorf("DeleteByFilter 失败: %w", err)
+	}
+
+	return nil
+}
+
 // Get 按 ID 取单个点 payload（引用来源查看 chunk 原文用）
 func (s *qdrantStore) Get(ctx context.Context, id string) (map[string]any, bool, error) {
 	points, err := s.client.Get(ctx, &pb.GetPoints{

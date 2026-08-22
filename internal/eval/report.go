@@ -5,18 +5,21 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/Bin-hy/bin-rag/internal/rag"
 )
 
 // EvalResult 单样本评估结果
 type EvalResult struct {
-	Sample    EvalSample
-	Retrieved []string     // 检索结果 ID（前 K 内）
-	Answer    string       // 问答回答
-	Sources   []string     // 引用来源文件名
-	Recall    map[int]bool // K → 是否命中期望片段
-	Accuracy  *float64     // LLM 准确性评分 0-10（未评 = nil）
-	Faithful  *bool        // LLM 忠实判定（未评 = nil）
-	Error     string       // 单样本错误（非空 = 失败）
+	Sample     EvalSample
+	Retrieved  []string     // 检索结果 ID（前 K 内）
+	Answer     string       // 问答回答
+	Sources    []string     // 引用来源文件名
+	RawSources []rag.Source // 原始引用来源（忠实度判定用）
+	Recall     map[int]bool // K → 是否命中期望片段
+	Accuracy   *float64     // LLM 准确性评分 0-10（未评 = nil）
+	Faithful   *bool        // LLM 忠实判定（未评 = nil）
+	Error      string       // 单样本错误（非空 = 失败）
 }
 
 // Report 评估汇总报告
@@ -156,9 +159,11 @@ func sortedKeys(m map[int]float64) []int {
 	return keys
 }
 
+// truncate 按字符（rune）截断，避免中文截断出非法 UTF-8
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	runes := []rune(s)
+	if len(runes) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(runes[:n]) + "…"
 }

@@ -68,6 +68,7 @@ type AskOptions struct {
 	// 内部字段（engine 内部设置，不对外配置）：
 	DataSource         string   // 路由判定后选中的数据源（vector_store / web_search），prepare 读取
 	AllowedDataSources []string // 允许的数据源集合（三层合并后），路由约束用
+	RouteComplexity    string   // 路由判定的复杂度（simple / complex），HyDE skip_simple 用
 }
 
 // AskOption 函数式问答选项
@@ -519,6 +520,7 @@ func (e *RAGEngine) Ask(ctx context.Context, sessionID string, question string, 
 			slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 		} else {
 			strategy = route.Strategy
+			o.RouteComplexity = route.Complexity // 传递给 prepare，HyDE skip_simple 用
 			// 数据源解析：受限 allowed 约束（AC4）+ 不可用降级（AC5）
 			o.AllowedDataSources = eff.DataSources
 			dsName, _ := e.resolveDataSource(eff.DataSources, route.DataSource)
@@ -665,6 +667,7 @@ func (e *RAGEngine) StreamAsk(ctx context.Context, sessionID string, question st
 				slog.Warn("路由判定失败，回退默认策略", "fallback", strategy, "err", err)
 			} else {
 				strategy = route.Strategy
+				o.RouteComplexity = route.Complexity // 传递给 prepare，HyDE skip_simple 用
 				// 数据源解析：受限 allowed 约束（AC4）+ 不可用降级（AC5）
 				o.AllowedDataSources = eff.DataSources
 				dsName, _ := e.resolveDataSource(eff.DataSources, route.DataSource)
@@ -963,7 +966,7 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 			slog.Info("数据源检索完成", "data_source", o.DataSource,
 				"检索耗时ms", time.Since(retrieveStart).Milliseconds(), "召回数", len(chunks))
 		}
-	} else if eff.HyDE == "on" && e.embedder != nil && eff.Query != "multi" {
+	} else if e.shouldHyde(eff.HyDE, routeResult{Complexity: o.RouteComplexity}) && eff.Query != "multi" {
 		chunks, err = e.hydeSearch(ctx, query, o)
 	} else {
 		chunks, err = e.retriever.Search(ctx, retriever.RetrieveRequest{

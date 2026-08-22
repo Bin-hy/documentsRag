@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Bin-hy/bin-rag/internal/loader"
@@ -69,19 +70,22 @@ func (h *handler) UploadDocument(c *gin.Context) {
 		return
 	}
 
-	// 扩展名校验（能否解析）
+	// 支持判断（格式识别 + 能力配置）：格式不支持 / 能力未配置在此统一拒绝（spec F7/AC5）
 	info := loader.FileInfo{Filename: file.Filename, Size: file.Size}
-	parser, err := h.registry.Resolve(info)
-	if err != nil {
-		Fail(c, CodeBadRequest, "不支持的文件格式: "+filepath.Ext(file.Filename))
+	if res := h.registry.Support(info); !res.Supported {
+		Fail(c, CodeBadRequest, res.Reason)
 		return
 	}
 
-	// 上传预检：解析一次统计可读文本，扫描件/空内容直接拒绝，避免无效内容入库
-	if h.loaderCfg.MinReadableChars > 0 {
-		if err := precheckReadable(file, parser, info, h.loaderCfg.MinReadableChars); err != nil {
-			Fail(c, CodeBadRequest, err.Error())
-			return
+	// 文本类：上传预检解析一次统计可读文本，扫描件/空内容直接拒绝，避免无效内容入库
+	// （多媒体 parser 已在 Support 中完成能力预检，此处不重复解析）
+	parser, err := h.registry.Resolve(info)
+	if err == nil {
+		if _, isMedia := parser.(loader.MediaCapabilityChecker); !isMedia && h.loaderCfg.MinReadableChars > 0 {
+			if err := precheckReadable(file, parser, info, h.loaderCfg.MinReadableChars); err != nil {
+				Fail(c, CodeBadRequest, err.Error())
+				return
+			}
 		}
 	}
 
@@ -132,6 +136,102 @@ func (h *handler) UploadDocument(c *gin.Context) {
 	}
 
 	OK(c, gin.H{"task_id": taskID, "document_id": docID})
+}
+
+// SupportedTypes 当前配置下支持的文件类型列表（供前端文件选择器动态渲染）
+//
+//	@Summary		支持的文件类型
+//	@Description	返回当前配置下各扩展名的支持状态（含类别与不支持原因），前端据此渲染上传面板可选类型
+//	@Tags			文档
+//	@Produce		json
+//	@Success		200	{object}	Response{data=[]loader.SupportedType}
+//	@Failure		401	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/documents/supported-types [get]
+func (h *handler) SupportedTypes(c *gin.Context) {
+	OK(c, h.registry.SupportedTypes())
+}
+
+// rawMIMEs 原文访问的扩展名 → MIME 映射（PDF/音频/Markdown/文本/图片）
+var rawMIMEs = map[string]string{
+	".pdf":      "application/pdf",
+	".mp3":      "audio/mpeg",
+	".wav":      "audio/wav",
+	".m4a":      "audio/mp4",
+	".flac":     "audio/flac",
+	".ogg":      "audio/ogg",
+	".aac":      "audio/aac",
+	".md":       "text/markdown",
+	".markdown": "text/markdown",
+	".txt":      "text/plain",
+	".html":     "text/html",
+	".htm":      "text/html",
+	".png":      "image/png",
+	".jpg":      "image/jpeg",
+	".jpeg":     "image/jpeg",
+	".webp":     "image/webp",
+	".gif":      "image/gif",
+	".bmp":      "image/bmp",
+	".mp4":      "video/mp4",
+	".avi":      "video/x-msvideo",
+	".mkv":      "video/x-matroska",
+	".mov":      "video/quicktime",
+	".webm":     "video/webm",
+}
+
+// GetRawDocument 原文文件访问（供 PDF/音频/Markdown 阅读器加载），支持 HTTP Range。
+// 路径仅来自数据库记录 doc.FilePath，鉴权走知识库访问控制，越权/不存在一律 404。
+//
+//	@Summary		原文文件
+//	@Description	按文档 ID 返回原始文件内容（Content-Type 按扩展名映射），支持 HTTP Range
+//	@Tags			文档
+//	@Produce		application/octet-stream
+//	@Param			id	path		string	true	"文档 ID"
+//	@Success		200	{string}	string	"文件内容"
+//	@Failure		400	{object}	Response
+//	@Failure		404	{object}	Response
+//	@Security		ApiKeyAuth
+//	@Router			/api/v1/documents/{id}/raw [get]
+func (h *handler) GetRawDocument(c *gin.Context) {
+	ctx := c.Request.Context()
+	docID := c.Param("id")
+	if _, err := uuid.Parse(docID); err != nil {
+		Fail(c, CodeNotFound, "文档不存在")
+		return
+	}
+
+	doc, err := h.store.GetDocument(ctx, docID)
+	if err != nil {
+		Fail(c, CodeNotFound, "文档不存在")
+		return
+	}
+	if !h.ensureKBAccess(c, doc.KBID) {
+		Fail(c, CodeNotFound, "文档不存在")
+		return
+	}
+
+	mime, ok := rawMIMEs[strings.ToLower(doc.Format)]
+	if !ok {
+		Fail(c, CodeBadRequest, "该类型不支持原文查看")
+		return
+	}
+
+	f, err := os.Open(doc.FilePath)
+	if err != nil {
+		Fail(c, CodeNotFound, "文档文件不存在")
+		return
+	}
+	defer f.Close()
+
+	stat, err := f.Stat()
+	if err != nil {
+		Fail(c, CodeInternal, "读取文档文件失败")
+		return
+	}
+
+	c.Header("Content-Type", mime)
+	c.Header("Accept-Ranges", "bytes")
+	http.ServeContent(c.Writer, c.Request, doc.Filename, stat.ModTime(), f)
 }
 
 // ListDocuments 按知识库列出文档

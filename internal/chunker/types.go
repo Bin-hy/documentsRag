@@ -52,6 +52,12 @@ type ChunkMeta struct {
 	DocFilename    string // 源文档文件名
 	HeadingContext string // 所属标题上下文路径
 	TokenCount     int    // 该 Chunk 的 token 数
+	SourceType     string // 来源类型："video" | "audio" | "image" | ""（文本类为空）
+	StartMs        int64  // 视频/音频定位起始时间戳（毫秒）
+	EndMs          int64  // 定位结束时间戳（毫秒）
+	PageNumber     int    // PDF 页码（从 1 开始，非 PDF 为 0）
+	Heading        string // Markdown 当前块最近一级标题文本
+	Anchor         string // 标题锚点（slugifyHeading 后的 heading）
 }
 
 // Chunk 分块输出

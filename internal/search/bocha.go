@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Bin-hy/bin-rag/internal/config"
+	"golang.org/x/time/rate"
 )
 
 // defaultBochaBaseURL 博查 AI 搜索官方端点
@@ -21,6 +22,7 @@ type bochaProvider struct {
 	apiKey  string
 	count   int
 	client  *http.Client
+	limiter *rate.Limiter // QPS 限流（接线 web_search.qps）
 }
 
 // NewBochaProvider 创建博查搜索提供者
@@ -37,11 +39,16 @@ func NewBochaProvider(cfg config.WebSearchConfig) Provider {
 	if timeout <= 0 {
 		timeout = 30
 	}
+	qps := cfg.QPS
+	if qps <= 0 {
+		qps = 1 // 兜底防 QPS=0 时限流器永久阻塞
+	}
 	return &bochaProvider{
 		baseURL: baseURL,
 		apiKey:  cfg.APIKey,
 		count:   count,
 		client:  &http.Client{Timeout: time.Duration(timeout) * time.Second},
+		limiter: rate.NewLimiter(rate.Limit(qps), qps),
 	}
 }
 
@@ -76,6 +83,10 @@ type bochaResponse struct {
 func (p *bochaProvider) Search(ctx context.Context, query string, opts Options) ([]Result, error) {
 	if !p.Available() {
 		return nil, fmt.Errorf("博查搜索未配置 api_key")
+	}
+
+	if err := p.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("限流等待失败: %w", err)
 	}
 
 	count := opts.Count

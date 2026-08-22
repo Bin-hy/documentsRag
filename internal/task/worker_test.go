@@ -18,10 +18,11 @@ import (
 type fakePipeline struct {
 	err      error
 	chunkIDs []string
+	warnings []string
 }
 
-func (f *fakePipeline) Ingest(ctx context.Context, req pipeline.IngestRequest) ([]string, error) {
-	return f.chunkIDs, f.err
+func (f *fakePipeline) Ingest(ctx context.Context, req pipeline.IngestRequest) ([]string, []string, error) {
+	return f.chunkIDs, f.warnings, f.err
 }
 
 // fakeStore 内存实现 store.Store（worker 测试用）
@@ -292,4 +293,30 @@ func createTempFile(t *testing.T) string {
 		t.Fatalf("写临时文件失败: %v", err)
 	}
 	return f
+}
+
+// 非阻断告警：warnings 写入任务 warning_message（spec N4/AC4）
+func TestProcess_WarningMessage(t *testing.T) {
+	fs := newFakeStore()
+	fs.docs["doc-1"] = store.Document{ID: "doc-1", FilePath: createTempFile(t)}
+
+	w := &defaultWorkerPool{
+		cfg:      config.ServerConfig{TaskMaxRetries: 3},
+		store:    fs,
+		pipeline: &fakePipeline{chunkIDs: []string{"c1"}, warnings: []string{"multimedia.speech 未配置，跳过视频音轨转写"}},
+	}
+
+	w.process(context.Background(), store.Task{
+		ID: "task-w", KBID: "kb-1", DocumentID: "doc-1", Status: store.TaskStatusProcessing,
+	})
+
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	task := fs.tasks["task-w"]
+	if task.Status != store.TaskStatusCompleted {
+		t.Fatalf("任务应 completed，实际 %s", task.Status)
+	}
+	if task.WarningMessage == "" || task.WarningMessage != "multimedia.speech 未配置，跳过视频音轨转写" {
+		t.Errorf("warning_message 未正确写入，实际 %q", task.WarningMessage)
+	}
 }

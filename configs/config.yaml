@@ -36,6 +36,47 @@ loader:
   # 默认 20：正常文档动辄数百，扫描件 PDF 图像指令通常 < 15
   min_readable_chars: 20
 
+# 多媒体处理能力配置（图片/音频/视频入库，ingestion 阶段能力，与问答阶段 llm 配置独立）
+# 未配置对应能力（api_key 为空）时，该类型文件上传将被明确拒绝（400 配置缺失），不会产生脏数据
+multimedia:
+  # 图片/视频帧视觉理解（OpenAI 兼容 /v1/chat/completions 视觉接口）
+  vision:
+    provider: "openai_compat"
+    base_url: ""  # 空 = 提供者官方地址（https://api.openai.com/v1）
+    api_key: ""   # 必填：配置后图片/视频才可上传
+    model: ""     # 支持视觉的模型，如 gpt-4o / qwen-vl-max
+    timeout: 30   # 秒
+  # 语音转写（provider 支持 openai_compat / dashscope）
+  #   openai_compat: OpenAI 兼容 /v1/audio/transcriptions 接口（whisper 类模型）
+  #   dashscope: 阿里云百炼 qwen ASR（走 /v1/chat/completions + input_audio，base_url 填百炼 MaaS 端点，
+  #              如 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1）
+  speech:
+    provider: "openai_compat"
+    base_url: ""
+    api_key: ""   # 必填：配置后音频才可上传；视频音轨转写也依赖此配置
+    model: ""     # openai_compat 如 whisper-1；dashscope 如 qwen3-asr-flash
+    timeout: 30
+  # 视频抽帧间隔（秒），默认 10；长视频建议调大以减少视觉模型调用（兼容，video.frame_interval_sec 优先）
+  frame_interval_sec: 10
+  # 视频处理（拆流 + 双抽帧策略）
+  video:
+    # 抽帧策略：fixed 固定间隔 / scene 场景检测（两阶段：预抽帧→视觉 embedding 相似度→代表帧）
+    frame_strategy: "fixed"
+    # 固定抽帧间隔（秒），frame_strategy=fixed 时生效
+    frame_interval_sec: 10
+    # 场景检测参数（frame_strategy=scene 时生效）
+    scene:
+      sample_fps: 2            # 预抽帧率（fps）
+      similarity_threshold: 0.85  # 相邻帧余弦相似度低于该值判定场景切换
+      min_scene_duration_ms: 3000 # 最小场景时长（毫秒）
+    # 场景检测视觉 embedding（frame_strategy=scene 时必填 api_key）
+    vision_embedding:
+      provider: "openai_compat"
+      base_url: ""
+      api_key: ""   # 场景检测必填；支持图像输入的 embedding 模型（如 CLIP / qwen-vl-embedding）
+      model: ""
+      timeout: 30
+
 # 分块器配置
 chunker:
   # 策略：fixed / recursive / heading

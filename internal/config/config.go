@@ -25,7 +25,8 @@ type Config struct {
 	Postgres    PostgresConfig    `yaml:"postgres"`
 	Server      ServerConfig      `yaml:"server"`
 	Loader      LoaderConfig      `yaml:"loader"`
-	OIDC        OIDCConfig        `yaml:"oidc"` // 三方登录 Provider（自定义 OIDC + GitHub OAuth2）
+	Multimedia  MultimediaConfig  `yaml:"multimedia"` // 多媒体处理（图片/音频/视频）能力配置
+	OIDC        OIDCConfig        `yaml:"oidc"`       // 三方登录 Provider（自定义 OIDC + GitHub OAuth2）
 }
 
 // WebSearchConfig 联网搜索提供者配置
@@ -43,6 +44,48 @@ type WebSearchConfig struct {
 // （阈值语义：默认 20，正常文档动辄数百，扫描件 PDF 图像指令通常 < 15）
 type LoaderConfig struct {
 	MinReadableChars int `yaml:"min_readable_chars"`
+}
+
+// MultimediaConfig 多媒体处理能力配置（ingestion 阶段，与问答阶段 llm 职责分离）
+// Vision: 图片/视频帧视觉理解；Speech: 语音转写。各自独立可配，未配置（APIKey 为空）时
+// 对应类型文件上传被明确拒绝（见 ErrMediaCapabilityMissing）。
+type MultimediaConfig struct {
+	Vision           MultimediaServiceConfig `yaml:"vision"`
+	Speech           MultimediaServiceConfig `yaml:"speech"`
+	FrameIntervalSec int                     `yaml:"frame_interval_sec"` // 视频抽帧间隔（秒），默认 10（兼容，video.frame_interval_sec 优先）
+	Video            VideoConfig             `yaml:"video"`
+}
+
+// VideoConfig 视频处理配置（拆流 + 双抽帧策略 + 场景检测，spec F1-F4）
+type VideoConfig struct {
+	FrameStrategy    string                  `yaml:"frame_strategy"`     // fixed | scene（默认 fixed）
+	FrameIntervalSec int                     `yaml:"frame_interval_sec"` // 固定抽帧间隔（秒），优先于顶层
+	Scene            SceneConfig             `yaml:"scene"`
+	VisionEmbedding  MultimediaServiceConfig `yaml:"vision_embedding"` // 场景检测视觉 embedding（frame_strategy=scene 必填）
+}
+
+// SceneConfig 场景检测参数（两阶段：预抽帧 → 视觉 embedding 相似度 → 场景代表帧）
+type SceneConfig struct {
+	SampleFPS           int     `yaml:"sample_fps"`            // 预抽帧率（fps），默认 2
+	SimilarityThreshold float64 `yaml:"similarity_threshold"`  // 相邻帧余弦相似度低于该值判定场景切换，默认 0.85
+	MinSceneDurationMs  int     `yaml:"min_scene_duration_ms"` // 最小场景时长（毫秒），默认 3000
+}
+
+// MultimediaServiceConfig 单个多媒体服务配置
+// Provider: openai_compat（默认，OpenAI 兼容 API；预留本地 VLM / Whisper 等扩展）
+// 注意：provider=dashscope 时 qwen ASR 不返回时间戳，该 provider 下音频 chunk 时间戳为 0，
+// 视频/音频定位锚点不可用（spec 30 F5 降级声明）。
+type MultimediaServiceConfig struct {
+	Provider string `yaml:"provider"`
+	BaseURL  string `yaml:"base_url"` // 空 = 提供者官方地址
+	APIKey   string `yaml:"api_key"`  // 空 = 未配置（Available()==false）
+	Model    string `yaml:"model"`
+	Timeout  int    `yaml:"timeout"` // 秒，默认 30
+}
+
+// Available 该服务是否已配置（有 APIKey 视为可用）
+func (s MultimediaServiceConfig) Available() bool {
+	return s.APIKey != ""
 }
 
 // RetrieverConfig 检索器配置
@@ -508,6 +551,44 @@ func (c *Config) applyDefaults() {
 			}
 		}
 	}
+	// 多媒体能力默认值（未配置 APIKey 时 Available()==false，对应类型上传被明确拒绝）
+	if c.Multimedia.FrameIntervalSec <= 0 {
+		c.Multimedia.FrameIntervalSec = 10
+	}
+	if c.Multimedia.Vision.Provider == "" {
+		c.Multimedia.Vision.Provider = "openai_compat"
+	}
+	if c.Multimedia.Vision.Timeout <= 0 {
+		c.Multimedia.Vision.Timeout = 30
+	}
+	if c.Multimedia.Speech.Provider == "" {
+		c.Multimedia.Speech.Provider = "openai_compat"
+	}
+	if c.Multimedia.Speech.Timeout <= 0 {
+		c.Multimedia.Speech.Timeout = 30
+	}
+	// 视频处理默认值（frame_interval_sec 顶层兼容，video 子节优先）
+	if c.Multimedia.Video.FrameStrategy == "" {
+		c.Multimedia.Video.FrameStrategy = "fixed"
+	}
+	if c.Multimedia.Video.FrameIntervalSec <= 0 {
+		c.Multimedia.Video.FrameIntervalSec = c.Multimedia.FrameIntervalSec
+	}
+	if c.Multimedia.Video.Scene.SampleFPS <= 0 {
+		c.Multimedia.Video.Scene.SampleFPS = 2
+	}
+	if c.Multimedia.Video.Scene.SimilarityThreshold <= 0 {
+		c.Multimedia.Video.Scene.SimilarityThreshold = 0.85
+	}
+	if c.Multimedia.Video.Scene.MinSceneDurationMs <= 0 {
+		c.Multimedia.Video.Scene.MinSceneDurationMs = 3000
+	}
+	if c.Multimedia.Video.VisionEmbedding.Provider == "" {
+		c.Multimedia.Video.VisionEmbedding.Provider = "openai_compat"
+	}
+	if c.Multimedia.Video.VisionEmbedding.Timeout <= 0 {
+		c.Multimedia.Video.VisionEmbedding.Timeout = 30
+	}
 }
 
 // providerNamePattern Provider Name 合法字符（须可安全用于 URL path）
@@ -559,6 +640,26 @@ func (c *Config) Validate() error {
 				}
 			}
 		}
+	}
+	// 多媒体服务 BaseURL 合法性（非空时须为带协议 URL；空 = 使用提供者官方地址）
+	for _, mc := range []struct {
+		name string
+		svc  MultimediaServiceConfig
+	}{{"multimedia.vision", c.Multimedia.Vision}, {"multimedia.speech", c.Multimedia.Speech}, {"multimedia.video.vision_embedding", c.Multimedia.Video.VisionEmbedding}} {
+		if mc.svc.BaseURL != "" {
+			if _, err := url.Parse(mc.svc.BaseURL); err != nil || !strings.Contains(mc.svc.BaseURL, "://") {
+				errs = append(errs, mc.name+".base_url 不是合法 URL")
+			}
+		}
+	}
+	// 抽帧策略合法性 + 场景检测依赖（spec F4/AC4）
+	switch c.Multimedia.Video.FrameStrategy {
+	case "fixed", "scene", "": // 空 = 未显式设置，applyDefaults 补 fixed
+	default:
+		errs = append(errs, "multimedia.video.frame_strategy 仅支持 fixed / scene")
+	}
+	if c.Multimedia.Video.FrameStrategy == "scene" && !c.Multimedia.Video.VisionEmbedding.Available() {
+		errs = append(errs, "multimedia.video.frame_strategy=scene 时须配置 multimedia.video.vision_embedding.api_key")
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("配置校验失败: %s", strings.Join(errs, "; "))

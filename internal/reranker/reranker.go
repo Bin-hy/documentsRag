@@ -75,6 +75,11 @@ func (r *apiReranker) Rerank(ctx context.Context, query string, candidates []Rer
 		return nil, nil
 	}
 
+	// topN 未显式指定时回退到配置值（接线 reranker.top_n）
+	if topN <= 0 {
+		topN = r.config.TopN
+	}
+
 	if err := r.limiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("限流等待失败: %w", err)
 	}

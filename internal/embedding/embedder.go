@@ -24,13 +24,19 @@ type openaiEmbedder struct {
 	limiter *rate.Limiter
 }
 
-// NewEmbedder 创建 Embedder（统一使用 OpenAI 兼容接口）
-func NewEmbedder(cfg config.EmbedderConfig) Embedder {
+// NewEmbedder 创建 Embedder（按 provider 分发，当前仅支持 OpenAI 兼容接口）
+func NewEmbedder(cfg config.EmbedderConfig) (Embedder, error) {
+	switch strings.ToLower(cfg.Provider) {
+	case "", "openai":
+		// 默认 / openai 兼容实现
+	default:
+		return nil, fmt.Errorf("未知 embedding provider: %s", cfg.Provider)
+	}
 	return &openaiEmbedder{
 		config:  cfg,
 		client:  &http.Client{Timeout: 30 * time.Second},
 		limiter: rate.NewLimiter(rate.Limit(cfg.QPS), cfg.QPS),
-	}
+	}, nil
 }
 
 func (e *openaiEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {

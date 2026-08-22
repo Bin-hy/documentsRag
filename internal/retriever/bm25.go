@@ -14,7 +14,11 @@ const (
 // BM25Index 内存倒排索引接口
 type BM25Index interface {
 	Add(id string, content string, kbID string)
+	// AddWithDocID 带文档维度的添加（pipeline 重试补偿用，RemoveByDoc 可按文档清理）
+	AddWithDocID(id string, content string, kbID string, docID string)
 	Remove(id string)
+	// RemoveByDoc 按文档 ID 删除所有关联 chunk（pipeline 重试补偿用）
+	RemoveByDoc(docID string)
 	Search(query string, topK int) []BM25Result
 	SearchFiltered(query string, topK int, kbID string) []BM25Result         // 空 kbID 不过滤
 	SearchFilteredByKBs(query string, topK int, kbIDs []string) []BM25Result // 空集合不过滤
@@ -34,6 +38,7 @@ type defaultBM25Index struct {
 	docLen    map[string]int       // docID -> token count
 	docTerms  map[string][]string  // docID -> terms (用于 Remove)
 	docKB     map[string]string    // docID -> kbID
+	docChunks map[string][]string  // documentID -> chunkIDs（RemoveByDoc 用）
 	totalLen  int
 	avgLen    float64
 }
@@ -46,10 +51,15 @@ func NewBM25Index(tokenizer Tokenizer) BM25Index {
 		docLen:    make(map[string]int),
 		docTerms:  make(map[string][]string),
 		docKB:     make(map[string]string),
+		docChunks: make(map[string][]string),
 	}
 }
 
 func (idx *defaultBM25Index) Add(id string, content string, kbID string) {
+	idx.AddWithDocID(id, content, kbID, "")
+}
+
+func (idx *defaultBM25Index) AddWithDocID(id string, content string, kbID string, docID string) {
 	tokens := idx.tokenizer.Tokenize(content)
 	if len(tokens) == 0 {
 		return
@@ -70,6 +80,9 @@ func (idx *defaultBM25Index) Add(id string, content string, kbID string) {
 
 	idx.docLen[id] = len(tokens)
 	idx.docKB[id] = kbID
+	if docID != "" {
+		idx.docChunks[docID] = append(idx.docChunks[docID], id)
+	}
 	idx.totalLen += len(tokens)
 	idx.avgLen = float64(idx.totalLen) / float64(len(idx.docLen))
 
@@ -85,6 +98,17 @@ func (idx *defaultBM25Index) Remove(id string) {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 	idx.removeLocked(id)
+}
+
+// RemoveByDoc 按文档 ID 删除所有关联 chunk（pipeline 重试补偿用）
+func (idx *defaultBM25Index) RemoveByDoc(docID string) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	chunkIDs := idx.docChunks[docID]
+	for _, id := range chunkIDs {
+		idx.removeLocked(id)
+	}
+	delete(idx.docChunks, docID)
 }
 
 func (idx *defaultBM25Index) removeLocked(id string) {
@@ -196,6 +220,7 @@ func (idx *defaultBM25Index) Rebuild(docs []BM25Doc) {
 	idx.docLen = make(map[string]int)
 	idx.docTerms = make(map[string][]string)
 	idx.docKB = make(map[string]string)
+	idx.docChunks = make(map[string][]string)
 	idx.totalLen = 0
 	idx.avgLen = 0
 	idx.mu.Unlock()

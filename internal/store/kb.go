@@ -109,8 +109,12 @@ func (s *pgStore) UpdateKB(ctx context.Context, kb KnowledgeBase) error {
 	return err
 }
 
-// DeleteKB 删除知识库（documents 通过外键级联删除；向量库清理由调用方负责）
+// DeleteKB 删除知识库（documents 通过外键级联删除；ingest_tasks 无外键，手动清理；向量库清理由调用方负责）
 func (s *pgStore) DeleteKB(ctx context.Context, id string) error {
+	// 先删关联 ingest_tasks（无外键约束，手动清理避免孤儿任务；不用外键保持分库分表扩展性）
+	if _, err := s.pool.Exec(ctx, `DELETE FROM ingest_tasks WHERE kb_id = $1`, id); err != nil {
+		return fmt.Errorf("清理关联入库任务失败: %w", err)
+	}
 	_, err := s.pool.Exec(ctx, `DELETE FROM knowledge_bases WHERE id = $1`, id)
 	return err
 }

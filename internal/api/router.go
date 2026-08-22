@@ -6,6 +6,9 @@
 //	@securityDefinitions.apikey	ApiKeyAuth
 //	@in							header
 //	@name						Authorization
+//	@securityDefinitions.apikey	BearerAuth
+//	@in							header
+//	@name						Authorization
 package api
 
 import (
@@ -107,7 +110,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	// 文档
 	v1.POST("/documents/upload", h.UploadDocument)
 	v1.GET("/documents", h.ListDocuments)
+	v1.GET("/documents/supported-types", h.SupportedTypes)
+	v1.GET("/documents/:id/raw", h.GetRawDocument)
 	v1.DELETE("/documents/:id", h.DeleteDocument)
+	v1.GET("/videos/:id/stream", h.StreamVideo)
 
 	// 任务
 	v1.GET("/tasks/:id", h.GetTask)

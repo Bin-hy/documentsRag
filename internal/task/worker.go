@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,7 +118,7 @@ func (w *defaultWorkerPool) process(ctx context.Context, t store.Task) {
 	defer f.Close()
 
 	start := time.Now()
-	chunkIDs, err := w.pipeline.Ingest(ctx, pipeline.IngestRequest{
+	chunkIDs, warnings, err := w.pipeline.Ingest(ctx, pipeline.IngestRequest{
 		KBID:       t.KBID,
 		DocumentID: t.DocumentID,
 		Reader:     f,
@@ -130,6 +131,9 @@ func (w *defaultWorkerPool) process(ctx context.Context, t store.Task) {
 
 	t.Status = store.TaskStatusCompleted
 	t.ErrorMessage = ""
+	if len(warnings) > 0 {
+		t.WarningMessage = strings.Join(warnings, "; ")
+	}
 	if err := w.store.UpdateTask(ctx, t); err != nil {
 		slog.Warn("更新任务状态失败", "task", t.ID, "err", err)
 	}
@@ -140,13 +144,16 @@ func (w *defaultWorkerPool) process(ctx context.Context, t store.Task) {
 		"耗时ms", time.Since(start).Milliseconds())
 }
 
-// fail 任务失败处理：未超上限回 pending 重试，否则 failed
+// fail 任务失败处理：未超上限回 pending 重试（指数退避），否则 failed
 func (w *defaultWorkerPool) fail(ctx context.Context, t store.Task, err error) {
 	if t.RetryCount < w.cfg.TaskMaxRetries {
 		t.Status = store.TaskStatusPending
 		t.RetryCount++
 		t.ErrorMessage = err.Error()
-		slog.Warn("入库任务失败，准备重试", "task", t.ID, "retry", t.RetryCount, "err", err)
+		// 指数退避：1s/2s/4s/8s...，避免持续错误密集打满外部服务
+		backoff := time.Second << uint(t.RetryCount)
+		t.UpdatedAt = time.Now().Add(backoff)
+		slog.Warn("入库任务失败，退避后重试", "task", t.ID, "retry", t.RetryCount, "backoff", backoff, "err", err)
 	} else {
 		t.Status = store.TaskStatusFailed
 		t.ErrorMessage = err.Error()

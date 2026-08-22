@@ -2,6 +2,8 @@ package eval
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/Bin-hy/bin-rag/internal/llm"
@@ -86,7 +88,7 @@ func runQA(ctx context.Context, ds *Dataset, cfg EvalConfig, rt retriever.Retrie
 			results[i] = res
 			return
 		}
-		res = evalAsk(ctx, engine, ds.Samples[i], res)
+		res = evalAsk(ctx, engine, i, ds.Samples[i], res)
 		results[i] = res
 	})
 	return results
@@ -101,7 +103,7 @@ func runFull(ctx context.Context, ds *Dataset, cfg EvalConfig, rt retriever.Retr
 			results[i] = res
 			return
 		}
-		res = evalAsk(ctx, engine, ds.Samples[i], res)
+		res = evalAsk(ctx, engine, i, ds.Samples[i], res)
 		if res.Error != "" {
 			results[i] = res
 			return
@@ -159,9 +161,9 @@ func evalRetrieve(ctx context.Context, rt retriever.Retriever, s EvalSample, kVa
 	return res
 }
 
-// evalAsk 单样本问答
-func evalAsk(ctx context.Context, engine rag.Engine, s EvalSample, res EvalResult) EvalResult {
-	sessionID := "eval-" + truncate(s.Question, 20)
+// evalAsk 单样本问答（sampleIndex 保证 sessionID 唯一，避免前缀相同样本历史互污）
+func evalAsk(ctx context.Context, engine rag.Engine, sampleIndex int, s EvalSample, res EvalResult) EvalResult {
+	sessionID := fmt.Sprintf("eval-%d-%s", sampleIndex, truncate(s.Question, 20))
 	opts := []rag.AskOption{}
 	if s.KBID != "" {
 		opts = append(opts, rag.WithKBID(s.KBID))
@@ -172,6 +174,7 @@ func evalAsk(ctx context.Context, engine rag.Engine, s EvalSample, res EvalResul
 		return res
 	}
 	res.Answer = out.Answer
+	res.RawSources = out.Sources // 保留原始来源供忠实度判定
 	for _, src := range out.Sources {
 		res.Sources = append(res.Sources, src.Filename)
 	}
@@ -188,7 +191,7 @@ func evalJudge(ctx context.Context, judgeLLM llm.LLM, s EvalSample, res EvalResu
 		}
 		res.Accuracy = &score
 	}
-	faithful, err := JudgeFaithfulness(ctx, judgeLLM, s.Question, res.Answer, nil, model)
+	faithful, err := JudgeFaithfulness(ctx, judgeLLM, s.Question, res.Answer, res.RawSources, model)
 	if err != nil {
 		res.Error = "忠实度判定失败: " + err.Error()
 		return res
@@ -212,6 +215,12 @@ func runConcurrent(ctx context.Context, concurrency, n int, fn func(i int)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// 单样本 panic 捕获：不 crash 整个评测进程
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("评测样本 panic", "index", i, "panic", r)
+				}
+			}()
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():

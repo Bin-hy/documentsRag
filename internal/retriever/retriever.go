@@ -289,6 +289,7 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 	}
 
 	results := make([][]RetrieveResult, len(queries))
+	methods := make([]string, len(queries)) // 逐路检索方式（vector/hybrid），思考链路用
 	errgroupCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -310,7 +311,7 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 			defer func() { <-sem }()
 
 			// 路内检索不做 rerank（SkipRerank 语义）：融合后统一整体重排（N1/AC2）
-			out, _, serr := r.searchFused(ctx, q, req.TopK, req.Filter)
+			out, method, serr := r.searchFused(ctx, q, req.TopK, req.Filter)
 			if serr != nil {
 				mu.Lock()
 				if firstErr == nil {
@@ -321,6 +322,7 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 				return
 			}
 			results[i] = out
+			methods[i] = method
 		}()
 	}
 	wg.Wait()
@@ -333,7 +335,7 @@ func (r *defaultRetriever) SearchMulti(ctx context.Context, req RetrieveRequest,
 			valid++
 		}
 		// 思考链路：逐路数据（顺序与 queries 一致，N7）
-		perQuery[i] = PerQueryTrace{Query: queries[i], Recalled: len(res)}
+		perQuery[i] = PerQueryTrace{Query: queries[i], Recalled: len(res), Method: methods[i]}
 	}
 	if valid == 0 {
 		if firstErr != nil {

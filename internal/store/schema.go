@@ -95,6 +95,11 @@ ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS owner_id TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_api_keys_owner ON api_keys(owner_id) WHERE owner_id IS NOT NULL;
 `
 
+// ingestTasksWarningMigration 任务告警列（幂等：非阻断告警如视频音轨降级，spec N4/AC4）
+const ingestTasksWarningMigration = `
+ALTER TABLE ingest_tasks ADD COLUMN IF NOT EXISTS warning_message TEXT NOT NULL DEFAULT '';
+`
+
 // mcpAuditLogsDDL MCP 调用审计表（仅记录 api_key_id 引用与截断参数，绝不存 Secret，spec F7）
 const mcpAuditLogsDDL = `
 CREATE TABLE IF NOT EXISTS mcp_audit_logs (
@@ -131,6 +136,9 @@ func (s *pgStore) Migrate(ctx context.Context) error {
 		return err
 	}
 	if _, err := s.pool.Exec(ctx, apiKeyOwnerMigration); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, ingestTasksWarningMigration); err != nil {
 		return err
 	}
 	_, err := s.pool.Exec(ctx, mcpAuditLogsDDL)

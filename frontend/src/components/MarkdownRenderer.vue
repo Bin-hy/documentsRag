@@ -1,7 +1,8 @@
 <script setup lang="ts">
-// Markdown 渲染 + 代码高亮（marked + highlight.js 按需注册）
+// Markdown 渲染 + 代码高亮（marked + highlight.js 按需注册）+ XSS 消毒（DOMPurify）
 import { computed } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import hljs from 'highlight.js/lib/core'
 import javascript from 'highlight.js/lib/languages/javascript'
 import typescript from 'highlight.js/lib/languages/typescript'
@@ -25,11 +26,14 @@ hljs.registerLanguage('sql', sql)
 const props = defineProps<{ content: string }>()
 
 const html = computed(() =>
-  marked.parse(props.content, {
-    async: false,
-    breaks: true,
-    gfm: true,
-  }) as string,
+  // DOMPurify 消毒：防止恶意文档注入 <script>/事件属性等 XSS 载荷
+  DOMPurify.sanitize(
+    marked.parse(props.content, {
+      async: false,
+      breaks: true,
+      gfm: true,
+    }) as string,
+  ),
 )
 </script>
 

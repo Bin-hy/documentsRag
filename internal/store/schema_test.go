@@ -28,6 +28,8 @@ func TestMigrate(t *testing.T) {
 	mock.ExpectExec("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS mcp_tools").WillReturnResult(pgxmock.NewResult("ALTER", 0))
 	// 3.5) api_keys owner_id 列 + 部分唯一索引（用户 MCP 凭据，每用户至多一个）
 	mock.ExpectExec("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS owner_id").WillReturnResult(pgxmock.NewResult("ALTER", 0))
+	// 3.6) ingest_tasks warning_message 列（非阻断告警，spec N4）
+	mock.ExpectExec("ALTER TABLE ingest_tasks ADD COLUMN IF NOT EXISTS warning_message").WillReturnResult(pgxmock.NewResult("ALTER", 0))
 	// 4) mcp_audit_logs 审计表 + 索引（一条多语句 SQL）
 	mock.ExpectExec("CREATE TABLE IF NOT EXISTS mcp_audit_logs").WillReturnResult(pgxmock.NewResult("CREATE", 0))
 

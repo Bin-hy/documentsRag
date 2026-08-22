@@ -123,8 +123,8 @@ func TestClaimPendingTasks(t *testing.T) {
 	s := &pgStore{pool: mock}
 	ts := now()
 
-	rows := pgxmock.NewRows([]string{"id", "kb_id", "document_id", "status", "retry_count", "error_message", "created_at", "updated_at"}).
-		AddRow("task-1", "kb-1", "doc-1", "processing", 0, "", ts, ts)
+	rows := pgxmock.NewRows([]string{"id", "kb_id", "document_id", "status", "retry_count", "error_message", "warning_message", "created_at", "updated_at"}).
+		AddRow("task-1", "kb-1", "doc-1", "processing", 0, "", "", ts, ts)
 
 	mock.ExpectQuery("UPDATE ingest_tasks").
 		WithArgs(1).
