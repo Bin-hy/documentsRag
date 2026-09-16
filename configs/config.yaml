@@ -295,3 +295,13 @@ oidc:
     #     - profile
     #     - email
 
+# RAGAS 评测服务反向代理（ragas-eval Python 微服务，/api/v1/eval/* 纯透传）
+# 两项均空 = 未配置：代理组返回 503「评测服务未配置」（前端评测中心不可用，其余功能不受影响）
+eval:
+  # 评测服务内网地址（compose 内网服务名，不暴露宿主端口）
+  # 示例：docker-compose 部署 "http://ragas-eval:8090"；本地直跑 "http://localhost:8090"
+  service_url: ""
+  # Go→Python 共享内部令牌（代理注入 X-Eval-Internal-Token 头，须与 Python 侧 EVAL_INTERNAL_TOKEN 一致）
+  # 建议用随机长串，如 openssl rand -hex 32
+  internal_token: ""
+

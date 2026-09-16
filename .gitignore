@@ -47,3 +47,11 @@ internal/webui/dist/*
 
 # 日志
 *.log
+
+# Python（评测微服务 services/ragas-eval）
+services/ragas-eval/.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

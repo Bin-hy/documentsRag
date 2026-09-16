@@ -74,7 +74,45 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  # RAGAS 评测微服务（Python / uv / FastAPI）
+  # 注意：不配置 ports —— 不暴露宿主端口，仅 compose 内网可达，入口统一走 Go 代理（/api/v1/eval/*）
+  # 前置条件：
+  #   1. .env 中配置 RAGAS_EVAL_API_KEY（BinRag 中创建的 ragas-eval 专用 API Key）、
+  #      EVAL_INTERNAL_TOKEN（与 Go 侧 eval_internal_token 一致的共享内部令牌）、
+  #      EVAL_JUDGE_* / EVAL_EMBED_*（评审模型与 Embedding 的 OpenAI 兼容端点，须与索引进库同源）
+  #   2. deploy/configs/config.docker.yaml 中配置 eval_service_url=http://ragas-eval:8090
+  #      与 eval_internal_token（Go 代理所需）
+  ragas-eval:
+    build:
+      context: ./services/ragas-eval
+    environment:
+      - EVAL_LISTEN_PORT=8090
+      - EVAL_BINRAG_BASE_URL=http://binrag-server:8085   # 回调 Go 的内网地址
+      - EVAL_BINRAG_API_KEY=${RAGAS_EVAL_API_KEY}         # 评测专用 API Key（.env 注入）
+      - EVAL_INTERNAL_TOKEN=${EVAL_INTERNAL_TOKEN}        # 与 Go 代理共享的内部令牌
+      - EVAL_JUDGE_BASE_URL=${EVAL_JUDGE_BASE_URL}        # Judge LLM OpenAI 兼容端点
+      - EVAL_JUDGE_API_KEY=${EVAL_JUDGE_API_KEY}
+      - EVAL_JUDGE_MODEL=${EVAL_JUDGE_MODEL}
+      - EVAL_EMBED_BASE_URL=${EVAL_EMBED_BASE_URL}        # Embedding（必须与索引同源）
+      - EVAL_EMBED_API_KEY=${EVAL_EMBED_API_KEY}
+      - EVAL_EMBED_MODEL=${EVAL_EMBED_MODEL}
+      - EVAL_DB_PATH=/data/eval.db
+      - EVAL_MAX_RUNNING_TASKS=2
+    volumes:
+      - eval_data:/data
+    depends_on:
+      binrag-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/healthz').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
 volumes:
   pg_data:
   qdrant_data:
   data_uploads:
+  eval_data:
