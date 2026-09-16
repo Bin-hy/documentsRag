@@ -1844,3 +1844,67 @@ func TestAsk_MultiQuerySingleRerank(t *testing.T) {
 		t.Errorf("多查询路径应含 StepMultiQuery: %+v", stepTypes(res.Thinking))
 	}
 }
+
+// include_contexts=true：Ask 返回的 Source 附带片段正文（评测采集出口）
+func TestAsk_IncludeContexts(t *testing.T) {
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "这是回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题", WithIncludeContexts(true))
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if len(res.Sources) != 2 {
+		t.Fatalf("引用来源数量错误: %d", len(res.Sources))
+	}
+	if res.Sources[0].Content != "检索内容一" || res.Sources[1].Content != "检索内容二" {
+		t.Errorf("include_contexts=true 时 Source 应附带正文: %+v", res.Sources)
+	}
+
+	// 历史持久化不含正文（marshalSources 剥离 Content）
+	histMsgs, _ := hs.Get("s1", 10)
+	for _, m := range histMsgs {
+		if strings.Contains(m.Sources, "检索内容") {
+			t.Errorf("历史中的 sources 不应包含片段正文: %s", m.Sources)
+		}
+	}
+}
+
+// 默认路径（不传 include_contexts）：Source 不附带正文，保持零影响
+func TestAsk_IncludeContextsDefaultOff(t *testing.T) {
+	fl := &fakeLLM{
+		genFunc: func(_ context.Context, _ []llm.Message) (string, error) {
+			return "这是回答", nil
+		},
+	}
+	ft := &fakeRetriever{
+		searchFunc: func(_ context.Context, _ retriever.RetrieveRequest) ([]retriever.RetrieveResult, error) {
+			return testResults(), nil
+		},
+	}
+	hs := NewMemoryHistoryStore(50)
+	engine := NewEngine(testRAGConfig(), fl, ft, hs, nil)
+
+	res, err := engine.Ask(context.Background(), "s1", "问题")
+	if err != nil {
+		t.Fatalf("Ask 失败: %v", err)
+	}
+	if len(res.Sources) != 2 {
+		t.Fatalf("引用来源数量错误: %d", len(res.Sources))
+	}
+	for _, s := range res.Sources {
+		if s.Content != "" {
+			t.Errorf("默认路径 Source 不应附带正文: %+v", s)
+		}
+	}
+}

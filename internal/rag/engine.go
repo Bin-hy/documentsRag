@@ -65,6 +65,9 @@ type AskOptions struct {
 	Sink        TraceSink              // 思考链路采集器（流式由 handler 注入；非流式 engine 自建 sliceSink）
 	ForceSingle bool                   // routing 判定 direct 时置位：本次查询强制 single（不对外配置）
 	Enhanced    bool                   // 增强模式：启用 function calling 工具（如 web_search）
+	// IncludeContexts 是否在 Source 中附带片段正文（评测采集 include_contexts=true）；
+	// 默认 false，响应/SSE/历史持久化均不含正文（零影响）
+	IncludeContexts bool
 	// 内部字段（engine 内部设置，不对外配置）：
 	DataSource         string   // 路由判定后选中的数据源（vector_store / web_search），prepare 读取
 	AllowedDataSources []string // 允许的数据源集合（三层合并后），路由约束用
@@ -105,6 +108,11 @@ func WithThinking(on bool) AskOption {
 // WithEnhanced 启用增强模式（function calling 工具，如 web_search）
 func WithEnhanced(on bool) AskOption {
 	return func(o *AskOptions) { o.Enhanced = on }
+}
+
+// WithIncludeContexts 请求在引用来源 Source 中附带片段正文（评测采集 include_contexts=true）
+func WithIncludeContexts(on bool) AskOption {
+	return func(o *AskOptions) { o.IncludeContexts = on }
 }
 
 // withForceSingle 仅供 engine 内部使用：routing 判定 direct 时强制本次查询 single（F-A1）
@@ -897,6 +905,9 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 
 			// 上下文组装
 			items, sources := buildContext(chunks, ragCfg.MaxContextTokens, ragCfg.MaxChunks)
+			if o.IncludeContexts {
+				fillSourceContents(sources, items) // 评测出口：附带片段正文
+			}
 			contextText, err := renderContext(items, e.templates.context)
 			if err != nil {
 				return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
@@ -983,6 +994,9 @@ func (e *RAGEngine) prepare(ctx context.Context, sessionID string, question stri
 
 	// 上下文组装
 	items, sources := buildContext(chunks, ragCfg.MaxContextTokens, ragCfg.MaxChunks)
+	if o.IncludeContexts {
+		fillSourceContents(sources, items) // 评测出口：附带片段正文
+	}
 	contextText, err := renderContext(items, e.templates.context)
 	if err != nil {
 		return nil, nil, fmt.Errorf("渲染上下文失败: %w", err)
@@ -1104,12 +1118,18 @@ func sendEvent(ctx context.Context, out chan<- StreamEvent, ev StreamEvent) bool
 	}
 }
 
-// marshalSources 序列化引用来源为 JSON 字符串（历史持久化用）；空/失败返回空串
+// marshalSources 序列化引用来源为 JSON 字符串（历史持久化用）；空/失败返回空串。
+// Content（include_contexts 评测出口正文）不入历史：体积大且历史回放不需要。
 func marshalSources(sources []Source) string {
 	if len(sources) == 0 {
 		return ""
 	}
-	b, err := json.Marshal(sources)
+	stripped := make([]Source, len(sources))
+	copy(stripped, sources)
+	for i := range stripped {
+		stripped[i].Content = ""
+	}
+	b, err := json.Marshal(stripped)
 	if err != nil {
 		return ""
 	}

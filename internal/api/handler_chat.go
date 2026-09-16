@@ -59,16 +59,17 @@ func (h *handler) resolveKBScope(c *gin.Context, reqKBID string) (string, []stri
 // Chat 普通问答（返回回答与引用来源）
 //
 //	@Summary		问答
-//	@Description	接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）
+//	@Description	接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）。query include_contexts=true 时各 Source 附带片段正文 content（评测采集专用出口，默认不填充）
 //	@Tags			问答
 //	@Accept			json
 //	@Produce		json
 //	@Produce		text/event-stream
-//	@Param			body	body		chatRequest	true	"问答请求"
-//	@Success		200		{object}	Response{data=rag.RAGResult}
-//	@Failure		400		{object}	Response
-//	@Failure		401		{object}	Response
-//	@Failure		500		{object}	Response
+//	@Param			include_contexts	query		bool		false	"是否在各 Source 附带片段正文 content（评测采集用）"
+//	@Param			body				body		chatRequest	true	"问答请求"
+//	@Success		200					{object}	Response{data=rag.RAGResult}
+//	@Failure		400					{object}	Response
+//	@Failure		401					{object}	Response
+//	@Failure		500					{object}	Response
 //	@Security		ApiKeyAuth
 //	@Router			/api/v1/chat [post]
 func (h *handler) Chat(c *gin.Context) {
@@ -96,6 +97,7 @@ func (h *handler) Chat(c *gin.Context) {
 		// 多库展开（KBIDs）时策略按原始 kb_id（空 → 全局）取用，各库策略暂不合并
 		rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
 		rag.WithConfigSnapshot(snap), rag.WithThinking(true), rag.WithEnhanced(req.Enhanced),
+		rag.WithIncludeContexts(includeContextsRequested(c)),
 	}
 	if kbID != "" {
 		askOpts = append(askOpts, rag.WithKBID(kbID))
@@ -154,6 +156,7 @@ func (h *handler) ChatStream(c *gin.Context) {
 		// 多库展开（KBIDs）时策略按原始 kb_id（空 → 全局）取用，各库策略暂不合并
 		rag.WithStrategy(h.kbStrategy(c, req.KBID), req.Strategy),
 		rag.WithConfigSnapshot(h.cfgSnapshot()), rag.WithThinking(true), rag.WithEnhanced(req.Enhanced),
+		rag.WithIncludeContexts(includeContextsRequested(c)),
 	}
 	if kbID != "" {
 		askOpts = append(askOpts, rag.WithKBID(kbID))
@@ -198,6 +201,11 @@ func isStreamRequest(c *gin.Context) bool {
 	}
 	accept := c.GetHeader("Accept")
 	return strings.Contains(accept, "text/event-stream")
+}
+
+// includeContextsRequested 是否请求在引用来源中附带片段正文（query include_contexts=true，评测采集出口）
+func includeContextsRequested(c *gin.Context) bool {
+	return c.Query("include_contexts") == "true"
 }
 
 // Enhancements 增强能力列表（前端增强面板动态渲染，多能力预留）

@@ -398,6 +398,9 @@ definitions:
       anchor:
         description: Markdown 标题锚点
         type: string
+      content:
+        description: 片段正文（仅 include_contexts=true 时填充，评测采集用）
+        type: string
       end_ms:
         description: 定位结束时间戳（毫秒）
         type: integer
@@ -917,8 +920,13 @@ paths:
       - application/json
       description: '接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream
         或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N
-        文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）'
+        文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）。query include_contexts=true
+        时各 Source 附带片段正文 content（评测采集专用出口，默认不填充）'
       parameters:
+      - description: 是否在各 Source 附带片段正文 content（评测采集用）
+        in: query
+        name: include_contexts
+        type: boolean
       - description: 问答请求
         in: body
         name: body
@@ -1317,6 +1325,79 @@ paths:
       summary: 上传文档
       tags:
       - 文档
+  /api/v1/eval/{path}:
+    delete:
+      description: 将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 评测服务代理
+      tags:
+      - 评测
+    get:
+      description: 将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 评测服务代理
+      tags:
+      - 评测
+    post:
+      description: 将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.Response'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/api.Response'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.Response'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/api.Response'
+      security:
+      - ApiKeyAuth: []
+      summary: 评测服务代理
+      tags:
+      - 评测
   /api/v1/knowledge-bases:
     get:
       description: 按当前身份返回知识库：登录用户仅返回自己创建的；系统级 API Key 返回全部。按创建时间倒序

@@ -98,7 +98,7 @@ func New(cfg *config.Config) (*App, error) {
 		st.Close()
 		return nil, fmt.Errorf("初始化向量集合失败: %w", err)
 	}
-	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer())
+	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer(retriever.WithCJKUnigram()))
 
 	// 文档加载注册表（含多媒体能力装配，spec F6）
 	reg := buildLoaderRegistry(*cfg)
@@ -374,7 +374,7 @@ func AssembleEvalDeps(cfg *config.Config) (*EvalDeps, error) {
 		return nil, fmt.Errorf("初始化向量集合失败: %w", err)
 	}
 
-	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer())
+	bm25 := retriever.NewBM25Index(retriever.NewSimpleTokenizer(retriever.WithCJKUnigram()))
 	llmClient := llm.NewLLM(cfg.LLM)
 	rr := reranker.NewReranker(cfg.Reranker)
 	rt := retriever.NewRetriever(cfg.Retriever, emb, vs, bm25, rr)

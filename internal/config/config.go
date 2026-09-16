@@ -27,6 +27,19 @@ type Config struct {
 	Loader      LoaderConfig      `yaml:"loader"`
 	Multimedia  MultimediaConfig  `yaml:"multimedia"` // 多媒体处理（图片/音频/视频）能力配置
 	OIDC        OIDCConfig        `yaml:"oidc"`       // 三方登录 Provider（自定义 OIDC + GitHub OAuth2）
+	Eval        EvalConfig        `yaml:"eval"`       // RAGAS 评测服务反向代理（未配置时 /api/v1/eval/* 返回 503）
+}
+
+// EvalConfig 评测服务（ragas-eval Python 微服务）反向代理配置。
+// 两项均空 = 未配置：代理组返回 503「评测服务未配置」（部署时由 compose/env 注入）。
+type EvalConfig struct {
+	ServiceURL    string `yaml:"service_url"`    // 评测服务内网地址，如 http://ragas-eval:8090（不暴露宿主端口，仅内网可达）
+	InternalToken string `yaml:"internal_token"` // Go→Python 共享内部令牌（注入 X-Eval-Internal-Token 头，与 Python 侧 EVAL_INTERNAL_TOKEN 一致）
+}
+
+// Available 评测代理是否已配置（地址与内部令牌均非空才代理，否则 503）
+func (e EvalConfig) Available() bool {
+	return e.ServiceURL != "" && e.InternalToken != ""
 }
 
 // WebSearchConfig 联网搜索提供者配置
@@ -660,6 +673,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Multimedia.Video.FrameStrategy == "scene" && !c.Multimedia.Video.VisionEmbedding.Available() {
 		errs = append(errs, "multimedia.video.frame_strategy=scene 时须配置 multimedia.video.vision_embedding.api_key")
+	}
+	// 评测服务地址合法性（非空时须为带协议 URL；空 = 未配置，代理组 503）
+	if c.Eval.ServiceURL != "" {
+		if _, err := url.Parse(c.Eval.ServiceURL); err != nil || !strings.Contains(c.Eval.ServiceURL, "://") {
+			errs = append(errs, "eval.service_url 不是合法 URL")
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("配置校验失败: %s", strings.Join(errs, "; "))

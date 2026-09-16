@@ -12,6 +12,8 @@
 package api
 
 import (
+	"net/http"
+
 	_ "github.com/Bin-hy/bin-rag/internal/api/docs"
 	"github.com/Bin-hy/bin-rag/internal/auth"
 	"github.com/Bin-hy/bin-rag/internal/config"
@@ -91,7 +93,16 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	pub.POST("/exchange", h.ExchangeTicket)
 
 	v1 := r.Group("/api/v1")
-	v1.Use(Auth(deps.Store, deps.Auth, deps.Config.AuthEnabled, deps.Config.BootstrapAPIKey))
+	authMW := Auth(deps.Store, deps.Auth, deps.Config.AuthEnabled, deps.Config.BootstrapAPIKey)
+	v1.Use(func(c *gin.Context) {
+		// 评测健康检查豁免鉴权（architect-design §2.5：eval/health 单独豁免）。
+		// 用包装中间件实现而非单独路由：Gin 不允许静态路由与 /eval/*path 通配共存。
+		if c.Request.Method == http.MethodGet && c.Request.URL.Path == evalHealthPath {
+			c.Next()
+			return
+		}
+		authMW(c)
+	})
 
 	// 认证（需认证：apikey / 会话 JWT）
 	v1.GET("/auth/me", h.Me)
@@ -124,6 +135,10 @@ func NewRouter(deps Dependencies) *gin.Engine {
 	v1.GET("/chat/enhancements", h.Enhancements)
 	v1.GET("/chat/history", h.GetHistory)
 	v1.GET("/chunks/:id", h.GetChunk)
+
+	// 评测服务（ragas-eval）反向代理：纯透传 + 内部令牌注入 + 提交任务 kb_id 越权校验；
+	// 未配置 eval.service_url / eval.internal_token 时 503；/eval/health 豁免鉴权（见上方中间件包装）
+	v1.Any("/eval/*path", h.EvalProxy)
 
 	// API Key 管理
 	v1.POST("/api-keys", h.CreateAPIKey)

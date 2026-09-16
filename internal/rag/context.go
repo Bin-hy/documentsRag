@@ -19,6 +19,7 @@ type Source struct {
 	EndMs      int64   `json:"end_ms,omitempty"`      // 定位结束时间戳（毫秒）
 	PageNumber int     `json:"page_number,omitempty"` // PDF 页码（从 1 开始）
 	Anchor     string  `json:"anchor,omitempty"`      // Markdown 标题锚点
+	Content    string  `json:"content,omitempty"`     // 片段正文（仅 include_contexts=true 时填充，评测采集用）
 }
 
 // ContextItem 单条上下文（供模板渲染）
@@ -77,6 +78,17 @@ func buildContext(chunks []retriever.RetrieveResult, maxTokens int, maxChunks in
 	}
 
 	return items, sources
+}
+
+// fillSourceContents 为各 Source 填充片段正文（include_contexts=true 时调用，评测采集出口）。
+// items 与 sources 一一对应（同为 buildContext 按序产出）；默认路径不调用，保持零影响
+// （响应、SSE sources 事件与历史持久化均不含正文）。
+func fillSourceContents(sources []Source, items []ContextItem) {
+	for i := range sources {
+		if i < len(items) {
+			sources[i].Content = items[i].Content
+		}
+	}
 }
 
 // formatContextItem 按默认格式渲染单条上下文，作为 token 估算基准

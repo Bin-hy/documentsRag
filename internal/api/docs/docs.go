@@ -607,7 +607,7 @@ const docTemplate = `{
                         "ApiKeyAuth": []
                     }
                 ],
-                "description": "接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）",
+                "description": "接收问题与可选的会话、知识库范围，走 RAG 编排返回回答与引用来源。默认返回 JSON；请求带 Accept: text/event-stream 或 query stream=1 时返回 SSE 流式（事件序列：thinking×N 思考链路 → sources 引用来源 → chunk×N 文本增量 → done 正常结束 / error 出错终止；思考链路开启时才有 thinking 事件）。query include_contexts=true 时各 Source 附带片段正文 content（评测采集专用出口，默认不填充）",
                 "consumes": [
                     "application/json"
                 ],
@@ -620,6 +620,12 @@ const docTemplate = `{
                 ],
                 "summary": "问答",
                 "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "是否在各 Source 附带片段正文 content（评测采集用）",
+                        "name": "include_contexts",
+                        "in": "query"
+                    },
                     {
                         "description": "问答请求",
                         "name": "body",
@@ -1269,6 +1275,122 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/eval/{path}": {
+            "get": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503",
+                "tags": [
+                    "评测"
+                ],
+                "summary": "评测服务代理",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503",
+                "tags": [
+                    "评测"
+                ],
+                "summary": "评测服务代理",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "ApiKeyAuth": []
+                    }
+                ],
+                "description": "将 /api/v1/eval/* 原样反向代理到 ragas-eval 评测微服务；未配置评测服务时返回 503",
+                "tags": [
+                    "评测"
+                ],
+                "summary": "评测服务代理",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.Response"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/api.Response"
                         }
@@ -2666,6 +2788,10 @@ const docTemplate = `{
             "properties": {
                 "anchor": {
                     "description": "Markdown 标题锚点",
+                    "type": "string"
+                },
+                "content": {
+                    "description": "片段正文（仅 include_contexts=true 时填充，评测采集用）",
                     "type": "string"
                 },
                 "end_ms": {

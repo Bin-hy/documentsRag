@@ -4,13 +4,15 @@ import "github.com/gin-gonic/gin"
 
 // 业务错误码（HTTP 状态码与业务码一致，便于前端处理）
 const (
-	CodeOK           = 0
-	CodeBadRequest   = 400
-	CodeUnauthorized = 401
-	CodeForbidden    = 403
-	CodeNotFound     = 404
-	CodeConflict     = 409
-	CodeInternal     = 500
+	CodeOK                 = 0
+	CodeBadRequest         = 400
+	CodeUnauthorized       = 401
+	CodeForbidden          = 403
+	CodeNotFound           = 404
+	CodeConflict           = 409
+	CodeInternal           = 500
+	CodeBadGateway         = 502
+	CodeServiceUnavailable = 503
 )
 
 // Response 统一响应格式

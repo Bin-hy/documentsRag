@@ -163,6 +163,9 @@ func (e *RAGEngine) tryMultiQuery(ctx context.Context, sessionID string, questio
 	}
 
 	items, sources := buildContext(chunks, e.cfg.MaxContextTokens, e.cfg.MaxChunks)
+	if o.IncludeContexts {
+		fillSourceContents(sources, items) // 评测出口：附带片段正文
+	}
 	contextText, err := renderContext(items, e.templates.context)
 	if err != nil {
 		return nil, false, fmt.Errorf("渲染上下文失败: %w", err)
