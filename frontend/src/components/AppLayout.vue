@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 主布局：左侧导航 + 顶栏 + 内容区（高级化改造：品牌 logo、柔和 active 态、玻璃顶栏、图标主题切换）
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { ChatDotRound, Collection, Connection, Key, Setting, Sunny, Moon, SwitchButton } from '@element-plus/icons-vue'
+import { ChatDotRound, Collection, Connection, DataAnalysis, Key, Setting, Sunny, Moon, SwitchButton } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -11,6 +11,14 @@ const router = useRouter()
 const auth = useAuthStore()
 
 const isDark = ref(document.documentElement.classList.contains('dark'))
+
+// 菜单高亮：子路径归并到父级菜单项（/eval/:id → /eval，/kb/:id → /kb）
+const activeMenu = computed(() => {
+  const p = route.path
+  if (p.startsWith('/eval')) return '/eval'
+  if (p.startsWith('/kb')) return '/kb'
+  return p
+})
 
 // 亮/暗主题切换（html.dark 初始态由 main.ts 在挂载前设置，登录页同样生效）
 function toggleTheme() {
@@ -44,7 +52,7 @@ async function handleLogout() {
           <span class="app-logo-sub">Docs RAG</span>
         </span>
       </div>
-      <el-menu :default-active="route.path" router class="app-menu">
+      <el-menu :default-active="activeMenu" router class="app-menu">
         <el-menu-item index="/chat">
           <el-icon><ChatDotRound /></el-icon>
           <span>对话问答</span>
@@ -52,6 +60,10 @@ async function handleLogout() {
         <el-menu-item index="/kb">
           <el-icon><Collection /></el-icon>
           <span>知识库</span>
+        </el-menu-item>
+        <el-menu-item index="/eval">
+          <el-icon><DataAnalysis /></el-icon>
+          <span>评测中心</span>
         </el-menu-item>
         <el-menu-item index="/keys">
           <el-icon><Key /></el-icon>

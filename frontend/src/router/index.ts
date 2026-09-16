@@ -19,6 +19,11 @@ const router = createRouter({
         { path: 'chat', name: 'chat', component: () => import('../views/ChatView.vue') },
         { path: 'kb', name: 'kb', component: () => import('../views/KbListView.vue') },
         { path: 'kb/:id', name: 'kb-detail', component: () => import('../views/KbDetailView.vue') },
+        // 评测中心（/eval/new 与 /eval/compare 必须先于 /eval/:id 注册，避免被 :id 吞掉）
+        { path: 'eval', name: 'eval-list', component: () => import('../views/eval/EvalListView.vue') },
+        { path: 'eval/new', name: 'eval-new', component: () => import('../views/eval/EvalNewView.vue') },
+        { path: 'eval/compare', name: 'eval-compare', component: () => import('../views/eval/EvalCompareView.vue') },
+        { path: 'eval/:id', name: 'eval-detail', component: () => import('../views/eval/EvalDetailView.vue') },
         { path: 'keys', name: 'keys', component: () => import('../views/ApiKeysView.vue') },
         { path: 'my-mcp', name: 'my-mcp', component: () => import('../views/MyMcpView.vue') },
         { path: 'settings', name: 'settings', component: () => import('../views/SettingsView.vue') },
